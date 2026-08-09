@@ -97,8 +97,21 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y musl-tools
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            # gcc-aarch64-linux-gnu (paquet apt) cible glibc : ses chemins
+            # de recherche de bibliothèques par défaut ne contiennent pas
+            # de libc.a musl compatible. Le lien final échoue alors même
+            # que rustc produit correctement les objets de démarrage musl
+            # self-contained (voir "error: linking with `aarch64-linux-gnu-gcc`
+            # failed: exit status: 1"). On utilise à la place un vrai
+            # cross-toolchain musl prêt à l'emploi (musl.cc) — solution
+            # standard documentée pour ce cas précis de cross-compilation
+            # Rust glibc-host → musl-target sur architecture différente.
+            curl -fsSL --retry 3 --retry-delay 2 -o /tmp/musl-cross.tgz \
+              https://musl.cc/aarch64-linux-musl-cross.tgz
+            sudo tar xzf /tmp/musl-cross.tgz -C /opt
+            echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
+            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
           fi
 
       # NOTE : --manifest-path pointe vers ilocker/Cargo.toml car le crate
