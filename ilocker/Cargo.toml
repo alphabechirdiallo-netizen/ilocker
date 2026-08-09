@@ -1,0 +1,81 @@
+[package]
+name = "iloc"
+version = "1.9.0"
+edition = "2021"
+description = "ilocker — instant snapshot, P2P & partage universel (standalone)"
+authors = ["ilocker contributors"]
+license = "MIT"
+repository = "https://github.com/alphabechirdiallo-netizen/ilocker"
+keywords  = ["snapshot", "p2p", "developer-tools"]
+
+[[bin]]
+name = "iloc"
+path = "src/main.rs"
+
+[dependencies]
+reed-solomon-erasure = "6.0.0"
+# Épinglé : zeroize >=1.9.0 exige edition2024, non stabilisé sur rustc 1.75 (CI/Linux compat)
+zeroize = "=1.8.2"
+indexmap = "=2.7.1"
+# ── CLI ───────────────────────────────────────────────────────
+clap       = { version = "=4.4.18", features = ["derive"] }
+
+# ── Serialisation ─────────────────────────────────────────────
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode    = "1"
+toml       = "=0.8.8"
+
+# ── Database ──────────────────────────────────────────────────
+rusqlite   = { version = "0.31", features = ["bundled"] }
+
+# ── Hashing / crypto ──────────────────────────────────────────
+sha2       = "0.10"
+hex        = "0.4"
+base64     = "0.21"
+aes-gcm    = "0.10"
+
+# ── IDs / time ────────────────────────────────────────────────
+uuid       = { version = "=1.8.0", features = ["v4"] }
+chrono     = { version = "0.4", features = ["serde"] }
+
+# ── Filesystem ────────────────────────────────────────────────
+walkdir    = "2"
+
+# ── Async (share / clone / hyperscale / update) ───────────────
+tokio      = { version = "=1.35.1", features = ["full"] }
+
+# ── TUI / terminal rendering ──────────────────────────────────
+crossterm  = "0.27"
+
+# ── Output ────────────────────────────────────────────────────
+anyhow     = "1"
+colored    = "2"
+indicatif  = "0.17"
+
+# ── HTTP (P2P + self-update via GitHub Releases) ──────────────
+hyper      = { version = "=0.14.31", features = ["client", "http1", "tcp"] }
+hyper-rustls = { version = "=0.24.2", features = ["http1", "webpki-tokio", "native-tokio"] }
+
+# ── Auth / terminal ───────────────────────────────────────────
+rpassword  = "=7.3.1"
+opener     = "0.7"
+# linux-no-secret-service retiré pour compatibilité rustc 1.75 (linux-keyutils 0.2.5 requiert rustc>=1.77)
+# En production avec rustc>=1.77, réactiver linux-no-secret-service
+keyring    = { version = "=2.3.2", default-features = false, features = ["platform-macos", "platform-windows"] }
+
+# ── Crypto ────────────────────────────────────────────────────
+chacha20poly1305 = { version = "0.10", features = ["getrandom"] }
+hmac             = "0.12"
+# Sealed box X25519 pour chiffrement des secrets GitHub Actions
+crypto_box       = { version = "0.9", features = ["std"] }
+# BLAKE2b pour la dérivation du nonce du sealed-box (spec crypto_box_seal)
+blake2           = "0.10"
+
+# ── Release profile : binaire statique maximal ────────────────
+[profile.release]
+opt-level     = 3
+lto           = true
+codegen-units = 1
+strip         = true
+panic         = "abort"    # réduit la taille du binaire

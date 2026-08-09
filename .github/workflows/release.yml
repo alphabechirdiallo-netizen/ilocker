@@ -1,0 +1,432 @@
+# ============================================================
+#  .github/workflows/release.yml
+#
+#  Déclenché par : git tag v*  (ex: git tag v1.9.0 && git push --tags)
+#
+#  Produit 5 binaires statiques :
+#    iloc-linux-x86_64
+#    iloc-linux-aarch64
+#    iloc-macos-x86_64
+#    iloc-macos-aarch64
+#    iloc-windows-x86_64.exe
+#
+#  Publie automatiquement sur GitHub Releases avec :
+#    - Les binaires
+#    - Les scripts install.sh / install.ps1
+#    - Un fichier SHA256SUMS pour vérification d'intégrité (binaires + scripts)
+#
+#  Suivi d'un smoke-test sur les 3 plateformes (compatible repo privé
+#  via `gh release download`, authentifié avec GITHUB_TOKEN).
+#  Aucun serveur iLocker requis — GitHub est le seul CDN.
+#
+#  NOTE STRUCTURE REPO : ce workflow suppose que le code Rust vit dans
+#  le sous-dossier `ilocker/` à la racine du repo (Cargo.toml en
+#  `ilocker/Cargo.toml`), avec `ilocker-deploy/` et `.github/` à côté.
+# ============================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build matrix ─────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (musl — binaire statique garanti)
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            asset_name: iloc-linux-x86_64
+
+          # Linux ARM64 (Raspberry Pi 4, Oracle Cloud ARM, AWS Graviton…)
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            asset_name: iloc-linux-aarch64
+
+          # macOS Intel
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            asset_name: iloc-macos-x86_64
+
+          # macOS Apple Silicon (M1/M2/M3/M4)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset_name: iloc-macos-aarch64
+
+          # Windows x86_64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset_name: iloc-windows-x86_64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Cache Cargo pour accélérer les rebuilds
+      # NOTE : le crate vit dans ilocker/, donc le target dir réel est ilocker/target
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ilocker/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('ilocker/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      # Linux : outils musl + cross-compilation aarch64
+      - name: Install musl tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y musl-tools
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          fi
+
+      # NOTE : --manifest-path pointe vers ilocker/Cargo.toml car le crate
+      # est dans un sous-dossier, pas à la racine du repo.
+      # NOTE : --locked interdit toute re-résolution silencieuse des deps —
+      # le build échoue explicitement si Cargo.toml et Cargo.lock divergent,
+      # plutôt que de dériver vers des versions non testées (voir zeroize/
+      # indexmap edition2024 dans le changelog de ce correctif).
+      - name: Build release binary
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
+        run: cargo build --release --locked --target ${{ matrix.target }} --manifest-path ilocker/Cargo.toml
+
+      # Renommer + rendre exécutable (Unix) — chemin corrigé : ilocker/target/...
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp ilocker/target/${{ matrix.target }}/release/iloc ${{ matrix.asset_name }}
+          chmod +x ${{ matrix.asset_name }}
+
+      # Renommer (Windows) — chemin corrigé : ilocker/target/...
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: cp ilocker/target/${{ matrix.target }}/release/iloc.exe ${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}
+          retention-days: 1
+
+  # ── Compiler et empaqueter l'extension VS Code ────────────────
+  # Job indépendant du build Rust (Node.js, pas de rustc) — accéléré
+  # en parallèle. Le .vsix produit par `vsce package` porte le numéro
+  # de version de l'extension dans son nom (ex: ilocker-studio-0.1.0.vsix) ;
+  # on le renomme vers un nom FIXE pour que `iloc studio open` puisse
+  # le retrouver dans une release sans connaître ce numéro à l'avance.
+  build-extension:
+    name: Build VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ilocker-studio-vscode/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ilocker-studio-vscode
+        run: npm ci
+
+      - name: Compile TypeScript
+        working-directory: ilocker-studio-vscode
+        run: npm run compile
+
+      - name: Package .vsix
+        working-directory: ilocker-studio-vscode
+        run: npx vsce package --allow-missing-repository --no-yarn
+
+      - name: Rename to fixed asset name
+        working-directory: ilocker-studio-vscode
+        run: |
+          VSIX=$(ls *.vsix | head -1)
+          cp "$VSIX" ilocker-studio.vsix
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ilocker-studio.vsix
+          path: ilocker-studio-vscode/ilocker-studio.vsix
+          retention-days: 1
+
+  # ── Créer la GitHub Release et attacher les binaires ─────────
+  release:
+    name: Publish GitHub Release
+    needs: [build, build-extension]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (pour changelog + scripts)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./binaries
+          merge-multiple: true
+
+      - name: List built binaries
+        run: ls -lh ./binaries/
+
+      # ── Copier install.sh / install.ps1 pour les inclure dans SHA256SUMS ──
+      - name: Copy install scripts into binaries dir
+        run: |
+          cp ./ilocker-deploy/install.sh ./binaries/install.sh
+          cp ./ilocker-deploy/install.ps1 ./binaries/install.ps1
+
+      # ── Générer SHA256SUMS (binaires + scripts d'installation + extension) ───
+      - name: Generate SHA256SUMS
+        run: |
+          cd ./binaries
+          sha256sum \
+            iloc-linux-x86_64 \
+            iloc-linux-aarch64 \
+            iloc-macos-x86_64 \
+            iloc-macos-aarch64 \
+            iloc-windows-x86_64.exe \
+            install.sh \
+            install.ps1 \
+            ilocker-studio.vsix \
+            > SHA256SUMS
+          cat SHA256SUMS
+
+      # ── Générer le changelog depuis les commits ───────────────
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-creatordate | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --oneline --no-merges | head -20)
+          else
+            COMMITS=$(git log --oneline --no-merges ${PREV_TAG}..HEAD)
+          fi
+
+          BODY="## ilocker ${GITHUB_REF_NAME}
+
+          ### Installation rapide
+
+          \`\`\`bash
+          # Linux / macOS (une ligne) — repo public
+          curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sh
+
+          # Linux / macOS — repo privé (nécessite un token GitHub)
+          curl -fsSL -H \"Authorization: token \$GITHUB_TOKEN\" \\
+            https://raw.githubusercontent.com/${{ github.repository }}/main/ilocker-deploy/install.sh | sh -s -- --token \"\$GITHUB_TOKEN\"
+
+          # Windows (PowerShell)
+          irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex
+
+          # Depuis un fichier reçu (Xender, USB, Bluetooth, email…)
+          chmod +x ./iloc-linux-x86_64
+          ./iloc-linux-x86_64 selfinstall
+          \`\`\`
+
+          ### Mise à jour automatique (depuis une version existante)
+
+          \`\`\`bash
+          iloc update
+          \`\`\`
+
+          ### Vérification d'intégrité (SHA-256)
+
+          \`\`\`bash
+          # Linux / macOS
+          curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/SHA256SUMS -o SHA256SUMS
+          sha256sum -c SHA256SUMS --ignore-missing
+
+          # Windows (PowerShell)
+          (Get-FileHash iloc-windows-x86_64.exe -Algorithm SHA256).Hash
+          \`\`\`
+
+          ### Commandes disponibles après installation
+
+          \`\`\`
+          # ── Snapshots locaux ──────────────────────────────────────
+          iloc init                       initialise un projet (vault externalisé par défaut)
+          iloc save \"msg\"                  snapshot CoW (APFS / Btrfs / ext4 / NTFS)
+          iloc undo [#N] [--file <path>]   restaure tout ou un fichier précis
+          iloc log [--ids]                 historique (IDs masqués par défaut)
+          iloc status [--health]           diff + score de santé du projet
+          iloc dashboard                   TUI interactif (projets + snapshots)
+
+          # ── Vault & sauvegarde 3-2-1 ─────────────────────────────
+          iloc vault status                état du coffre-fort + tiers
+          iloc vault migrate [--mode]      déplacer le vault (sibling/system/custom)
+          iloc vault mirror add <path>     Tier 2 : miroir local (NAS, USB…)
+          iloc vault mirror remove <path>
+          iloc vault mirror sync
+          iloc vault backup enable-cloud [--profile <nom>]   Tier 3a
+          iloc vault backup disable-cloud
+          iloc vault backup enable-hyperscale               Tier 3b
+          iloc vault backup disable-hyperscale
+          iloc vault verify                vérification SHA-256 de tous les snapshots
+
+          # ── Cloud BYOC (AWS S3 / Backblaze / MinIO / DO / Supabase / GCS / R2 / Wasabi / Azure) ──
+          iloc config cloud add [--name]   assistant interactif (credentials dans le trousseau OS)
+          iloc config cloud list
+          iloc config cloud use <nom>
+          iloc config cloud remove <nom>
+          iloc push [--file …] [--profile]   chiffrement ChaCha20-Poly1305 avant envoi
+          iloc pull [--file …] [--profile]
+          iloc cloud usage [--profile]
+          iloc cloud gc [--profile] [--yes]
+          iloc cloud doctor [--profile]
+          iloc cloud verify [--profile]
+
+          # ── GitHub / Vercel / Supabase (providers de déploiement) ──
+          iloc github <sous-commande>
+          iloc vercel <sous-commande>
+          iloc supabase <sous-commande>
+          iloc deploy [--yes]              orchestre les 3 providers
+
+          # ── Providers déclaratifs (tiers, sans recompiler ilocker) ──
+          iloc provider init <slug>        scaffold un manifeste TOML commenté
+          iloc provider validate <path>    schéma + garde-fous de sécurité
+          iloc provider test <path>        vrais appels API, rien stocké
+          iloc provider install --file <path>
+          iloc provider list
+          iloc provider remove <slug> [--yes]
+          iloc provider profile list|use|remove <slug> ...
+          iloc connect <slug>              puis iloc <slug> <opération> [args]
+
+          # ── Partage P2P ───────────────────────────────────────────
+          iloc share [--port] [--relay] [--file …]          P2P direct ou NAT traversal
+          iloc share --cloud [--ttl] [--file …] [--profile] lien cloud chiffré (S3-compatible)
+          iloc clone <key|token> [--host] [--relay] [--key-secret] [--dest]
+
+          # ── Hyperscale (Erasure Coding Reed-Solomon GF(2^8) multi-cloud) ──
+          iloc hyperscale push [--path] [--file …]
+          iloc hyperscale clone <url> [--dest]
+          iloc hyperscale export <path> [--target]
+          iloc hyperscale status
+          iloc hyperscale config show|init [--org]|validate
+          iloc hyperscale node start|stop|status
+
+          # ── Sentinel (auto-save avant commandes destructrices) ────
+          iloc sentinel enable              installe hook Bash + Zsh (~/.ilocker/hooks/)
+          iloc sentinel disable
+          iloc sentinel status
+          iloc sentinel uninstall
+
+          # ── Complétion shell ──────────────────────────────────────
+          iloc completion bash [--setup]
+          iloc completion zsh  [--setup]
+
+          # ── Auto-gestion ──────────────────────────────────────────
+          iloc selfinstall [--dir] [--check]
+          iloc update [--check]
+
+          # ── Mesh node (optionnel) ─────────────────────────────────
+          iloc node join|leave|start|status
+          iloc login / logout / whoami
+          \`\`\`
+
+          ### Changements
+          ${COMMITS}
+
+          ---
+          *Binaires statiques musl/MSVC — aucune dépendance runtime. Zéro serveur iLocker requis.*"
+
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # ── Publier la release ────────────────────────────────────
+      # NOTE : GITHUB_TOKEN par défaut fonctionne déjà pour un repo privé —
+      # `permissions: contents: write` (en tête de fichier) suffit pour créer
+      # la release et uploader les assets, public ou privé.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "ilocker ${{ github.ref_name }}"
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          files: |
+            ./binaries/iloc-linux-x86_64
+            ./binaries/iloc-linux-aarch64
+            ./binaries/iloc-macos-x86_64
+            ./binaries/iloc-macos-aarch64
+            ./binaries/iloc-windows-x86_64.exe
+            ./binaries/SHA256SUMS
+            ./binaries/install.sh
+            ./binaries/install.ps1
+            ./binaries/ilocker-studio.vsix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Smoke-test post-release sur les 3 plateformes ────────────
+  # NOTE : utilise `gh release download` (authentifié via GH_TOKEN) au lieu
+  # d'un curl/Invoke-WebRequest nu, car un curl anonyme sur l'URL directe
+  # d'un asset de release échoue (404) si le repo est privé. `gh` gère
+  # l'authentification et la redirection signée automatiquement, que le
+  # repo soit public ou privé.
+  smoke-test:
+    name: Smoke test ${{ matrix.os }}
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Test installation (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          TAG="${{ github.ref_name }}"
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/arm64/aarch64/')
+          ASSET="iloc-${OS}-${ARCH}"
+          echo "Téléchargement (via gh, compatible repo privé) : $ASSET"
+          gh release download "$TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern "$ASSET" \
+            --output /tmp/iloc \
+            --clobber
+          chmod +x /tmp/iloc
+          /tmp/iloc --version
+          echo "Smoke test passed ✓"
+
+      - name: Test installation (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $TAG = "${{ github.ref_name }}"
+          gh release download $TAG `
+            --repo "${{ github.repository }}" `
+            --pattern "iloc-windows-x86_64.exe" `
+            --output "$env:TEMP\iloc.exe" `
+            --clobber
+          & "$env:TEMP\iloc.exe" --version
+          Write-Host "Smoke test passed OK"

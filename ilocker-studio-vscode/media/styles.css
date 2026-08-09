@@ -1,0 +1,124 @@
+/* ============================================================
+   ilocker Studio — design tokens
+   Palette "poste de contrôle" : charbon-bleu profond, deux accents
+   porteurs de sens (ambre = agir, sarcelle = état/info) — pas un
+   accent décoratif unique. Voix monospace en avant (le sujet EST
+   un outil en ligne de commande), prose en sans-serif pour le
+   confort de lecture des descriptions.
+   ============================================================ */
+:root {
+  --ilk-bg:          #14181D;
+  --ilk-surface:     #1C2129;
+  --ilk-surface-alt: #232A34;
+  --ilk-border:      #2A313C;
+  --ilk-text:        #E8EAED;
+  --ilk-text-dim:    #8891A0;
+  --ilk-text-faint:  #5B6472;
+
+  --ilk-amber:       #E8A33D;
+  --ilk-amber-dim:   #8A6329;
+  --ilk-teal:        #4FC1B8;
+  --ilk-teal-dim:    #2F726C;
+  --ilk-red:         #E85D5D;
+  --ilk-red-dim:     #7A3535;
+  --ilk-green:       #5FBF7A;
+
+  --ilk-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --ilk-sans: -apple-system, 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+
+  --ilk-radius: 6px;
+  --ilk-radius-sm: 4px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ilk-bg);
+  color: var(--ilk-text);
+  font-family: var(--ilk-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+}
+
+code, .mono, .cmd-sig { font-family: var(--ilk-mono); }
+
+::selection { background: var(--ilk-teal-dim); color: var(--ilk-text); }
+
+/* ── Focus visible (accessibilité — jamais retiré) ────────────── */
+a:focus-visible, button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--ilk-teal);
+  outline-offset: 2px;
+}
+
+/* ── Scrollbars discrètes, cohérentes avec l'éditeur ──────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--ilk-border); border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Indicateur "pulse" — signature visuelle. Utilisé UNIQUEMENT
+   pour un état réellement vivant (process actif, session Sentinel
+   active) — jamais décoratif. Respecte prefers-reduced-motion. ── */
+.pulse-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ilk-teal);
+  box-shadow: 0 0 0 0 rgba(79, 193, 184, 0.6);
+  animation: ilk-pulse 2.2s ease-out infinite;
+  display: inline-block;
+}
+.pulse-dot.amber { background: var(--ilk-amber); box-shadow: 0 0 0 0 rgba(232, 163, 61, 0.6); }
+.pulse-dot.off   { background: var(--ilk-text-faint); animation: none; box-shadow: none; }
+
+@keyframes ilk-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(79, 193, 184, 0.55); }
+  70%  { box-shadow: 0 0 0 7px rgba(79, 193, 184, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(79, 193, 184, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-dot { animation: none; }
+}
+
+/* ── Badges de risque ──────────────────────────────────────────── */
+.badge { font-size: 10.5px; font-family: var(--ilk-mono); padding: 1px 6px; border-radius: 3px; letter-spacing: 0.02em; }
+.badge.caution     { background: var(--ilk-amber-dim); color: var(--ilk-amber); }
+.badge.destructive { background: var(--ilk-red-dim); color: #FFB4B4; }
+
+/* ── Boutons ───────────────────────────────────────────────────── */
+button {
+  font-family: var(--ilk-sans);
+  border: 1px solid var(--ilk-border);
+  background: var(--ilk-surface-alt);
+  color: var(--ilk-text);
+  border-radius: var(--ilk-radius-sm);
+  padding: 6px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--ilk-text-faint); }
+button.primary { background: var(--ilk-amber); border-color: var(--ilk-amber); color: #1A1204; font-weight: 600; }
+button.primary:hover { background: #F0AE4C; }
+button.danger { background: transparent; border-color: var(--ilk-red-dim); color: #FFB4B4; }
+button.danger:hover { background: var(--ilk-red-dim); }
+
+input[type="text"], input[type="search"] {
+  font-family: var(--ilk-sans);
+  background: var(--ilk-surface);
+  border: 1px solid var(--ilk-border);
+  color: var(--ilk-text);
+  border-radius: var(--ilk-radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+  width: 100%;
+}
+input[type="text"]::placeholder, input[type="search"]::placeholder { color: var(--ilk-text-faint); }
+
+/* ── Cartes ────────────────────────────────────────────────────── */
+.card {
+  background: var(--ilk-surface);
+  border: 1px solid var(--ilk-border);
+  border-radius: var(--ilk-radius);
+  padding: 12px 14px;
+}
+
+hr { border: none; border-top: 1px solid var(--ilk-border); margin: 14px 0; }

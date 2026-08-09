@@ -1,0 +1,4002 @@
+{
+  "init": {
+    "summary": "Initialise ilocker dans le dossier courant : crée le coffre-fort et la base de suivi des snapshots.",
+    "details": "Première commande à lancer dans un projet. Crée un dossier .ilocker/ léger (config, index SQLite) et un coffre-fort séparé qui contiendra les snapshots eux-mêmes — par défaut dans un dossier voisin du projet (mode « sibling »), jamais dans l'arbre versionné par Git. Génère aussi une clé unique iloc://<uuid> qui identifie ce projet pour le partage P2P. Active le Sentinel (auto-save avant commandes destructrices) par défaut, sauf si --no-sentinel est passé. Refuse de s'exécuter si le projet est déjà initialisé.",
+    "example": "iloc init",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "vault_mode": {
+        "description": "Où stocker les snapshots : sibling (dossier voisin, par défaut), in-project (ancien comportement, dans .ilocker/), system (dossier de données du système), ou custom (chemin choisi via --vault-dir)."
+      },
+      "vault_dir": {
+        "description": "Chemin du coffre-fort quand --vault-mode custom est utilisé (ex : un NAS ou un second disque)."
+      },
+      "mirror": {
+        "description": "Ajoute un miroir local (Tier 2) qui recevra une copie de chaque snapshot — répétable pour en ajouter plusieurs."
+      },
+      "cloud_backup": {
+        "description": "Active l'envoi automatique vers votre cloud personnel (Tier 3a) après chaque save. Nécessite un profil configuré via iloc config cloud add."
+      },
+      "hyperscale_backup": {
+        "description": "Active la sauvegarde Hyperscale (Tier 3b) après chaque save. Fonctionnalité expérimentale — l'upload réel n'est pas encore implémenté à ce jour."
+      },
+      "no_gitignore_patch": {
+        "description": "N'ajoute pas automatiquement .ilocker/ au fichier .gitignore du projet (activé par défaut pour éviter de versionner les snapshots par erreur)."
+      },
+      "no_sentinel": {
+        "description": "N'active pas le Sentinel (protection auto-save avant les commandes destructrices) pour ce projet."
+      }
+    }
+  },
+  "save": {
+    "summary": "Crée un snapshot de l'état actuel du projet — l'équivalent d'une sauvegarde instantanée et complète.",
+    "details": "Scanne tout le projet (en ignorant node_modules, .venv, target/ et autres dossiers de dépendances via .ilockerignore), calcule un hash SHA-256 de chaque fichier, et ne stocke que ce qui a changé depuis le dernier snapshot (déduplication). Utilise le clonage Copy-on-Write du système de fichiers quand disponible (APFS, Btrfs, ext4 récent, NTFS) pour un stockage quasi instantané et économe en espace. Chaque snapshot est scellé en lecture seule après création — il ne peut plus être modifié, seulement restauré via iloc undo.",
+    "example": "iloc save \"avant refonte de l'authentification\"",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {
+      "message": {
+        "description": "Description du snapshot — sera affichée dans iloc log. Un message clair facilite grandement la restauration plus tard."
+      }
+    }
+  },
+  "undo": {
+    "summary": "Restaure le projet (ou des fichiers précis) depuis un snapshot antérieur.",
+    "details": "Sans argument, restaure depuis le dernier snapshot. Avec un numéro (voir iloc log), restaure depuis ce snapshot précis. Un snapshot de sécurité de l'état actuel est automatiquement créé AVANT toute restauration — undo est donc lui-même annulable. Les dossiers de dépendances (node_modules, .venv, target, vendor, build...) ne sont jamais touchés, pour que le projet reste immédiatement exécutable après restauration. Avec --file, restaure uniquement le(s) fichier(s) précisé(s) sans toucher au reste du projet — utile pour annuler un changement ciblé sans perdre du travail plus récent ailleurs.",
+    "example": "iloc undo 3 --file src/app.rs",
+    "prerequisites": [
+      "iloc save (au moins un snapshot existant)"
+    ],
+    "danger": "caution",
+    "args": {
+      "id": {
+        "description": "Numéro du snapshot visé (voir la colonne #N de iloc log). Omis = dernier snapshot."
+      },
+      "file": {
+        "description": "Restaure uniquement ce fichier (répétable pour plusieurs fichiers) au lieu de tout le projet."
+      }
+    }
+  },
+  "log": {
+    "summary": "Affiche l'historique des snapshots, du plus récent au plus ancien.",
+    "details": "Chaque snapshot est listé avec son message, sa date, le nombre de fichiers et la taille totale. Par défaut, l'identifiant technique (hash hexadécimal) est masqué au profit d'un simple numéro séquentiel (#1 = le plus récent), plus simple à utiliser avec iloc undo <N>.",
+    "example": "iloc log",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {
+      "ids": {
+        "description": "Affiche aussi l'identifiant technique complet de chaque snapshot (utile pour des scripts ou pour partager une référence exacte)."
+      }
+    }
+  },
+  "status": {
+    "summary": "Compare l'état actuel du projet au dernier snapshot : quels fichiers ont changé.",
+    "details": "Affiche les fichiers ajoutés, modifiés et supprimés depuis le dernier iloc save, plus le nombre de fichiers inchangés et la taille totale du projet. Avec --health, bascule sur un rapport différent : un score de santé (0-100) basé sur la fréquence des snapshots, l'efficacité de la déduplication, et la présence de gros fichiers binaires qui devraient être ignorés.",
+    "example": "iloc status",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {
+      "health": {
+        "description": "Affiche un score de santé du projet (0-100) plutôt que le diff habituel : fréquence des snapshots, efficacité de la déduplication, hygiène des fichiers binaires."
+      }
+    }
+  },
+  "dashboard": {
+    "summary": "Ouvre un tableau de bord interactif dans le terminal — navigation au clavier entre projets et snapshots.",
+    "details": "Interface plein écran (pas une simple liste) montrant tous vos projets ilocker connus, l'arbre des snapshots du projet sélectionné, et des statistiques de stockage globales (économies de déduplication). Navigation : flèches ou j/k pour se déplacer, Entrée pour déplier/replier l'arbre des snapshots, q ou Échap pour quitter.",
+    "example": "iloc dashboard",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "studio.open": {
+    "summary": "Ouvre le centre de commandes ilocker dans VS Code.",
+    "details": "Détecte VS Code (ou un fork compatible comme Cursor) dans le PATH, installe automatiquement l'extension « ilocker Studio » si elle n'est pas déjà présente (télécharge le .vsix depuis la même release GitHub que le binaire — token GitHub réutilisé automatiquement si nécessaire pour un dépôt privé), puis ouvre l'éditeur sur le dossier courant.",
+    "example": "iloc studio open",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "sentinel.init": {
+    "summary": "Installe les hooks Sentinel sans les activer immédiatement dans le shell courant.",
+    "details": "Écrit les scripts de hook (Bash, Zsh, et PowerShell si détecté) dans ~/.ilocker/hooks/, partagés par tous vos projets ilocker. N'ajoute rien à vos fichiers de configuration shell — c'est iloc sentinel enable qui fait ça. Utile pour préparer l'installation sans modifier immédiatement l'environnement.",
+    "example": "iloc sentinel init",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "sentinel.enable": {
+    "summary": "Active la protection automatique avant les commandes destructrices (rm -rf, git reset --hard, docker system prune, etc.).",
+    "details": "Ajoute un bloc à vos fichiers de configuration shell (~/.bashrc, ~/.zshrc, et le profil PowerShell si détecté — support natif Windows PowerShell 5.1+ et PowerShell 7+ via PSReadLine, pas seulement Bash/Zsh). Une fois activé, plus de 35 patterns de commandes risquées sont surveillés : si l'une d'elles est tapée dans un dossier avec un projet ilocker initialisé, un snapshot de sécurité est créé automatiquement en arrière-plan (moins de 500ms) avant que la commande ne s'exécute normalement. Nécessite d'ouvrir un nouveau terminal (ou de recharger le fichier de config) pour prendre effet.",
+    "example": "iloc sentinel enable",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "sentinel.disable": {
+    "summary": "Désactive le Sentinel dans les fichiers de configuration shell, sans désinstaller les hooks.",
+    "details": "Retire le bloc d'activation de ~/.bashrc / ~/.zshrc / du profil PowerShell. Les scripts de hook restent installés dans ~/.ilocker/hooks/ — vous pouvez réactiver avec iloc sentinel enable sans tout réinstaller. Un terminal déjà ouvert doit être redémarré pour que la désactivation prenne effet.",
+    "example": "iloc sentinel disable",
+    "prerequisites": [
+      "iloc sentinel enable"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "sentinel.status": {
+    "summary": "Affiche l'état du Sentinel : hooks installés, activation par shell, et si actif dans la session courante.",
+    "details": "Vérifie séparément Bash, Zsh et PowerShell, et précise si les hooks sont installés mais pas encore actifs dans le terminal ouvert (auquel cas il faut en ouvrir un nouveau).",
+    "example": "iloc sentinel status",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "sentinel.uninstall": {
+    "summary": "Désinstalle complètement le Sentinel : retire les blocs de configuration ET supprime les scripts de hook.",
+    "details": "Contrairement à iloc sentinel disable (réversible facilement), cette commande supprime aussi les fichiers de hook globaux dans ~/.ilocker/hooks/. Pour réactiver ensuite, il faudra relancer iloc sentinel enable (qui réinstalle tout).",
+    "example": "iloc sentinel uninstall",
+    "prerequisites": [],
+    "danger": "caution",
+    "args": {}
+  },
+  "vault.status": {
+    "summary": "Affiche l'état complet du coffre-fort : emplacement, santé, taille, et niveaux de sauvegarde actifs.",
+    "details": "Montre le mode de stockage (sibling/in-project/system/custom), vérifie que le coffre-fort est bien accessible (détecte un disque débranché ou un dossier déplacé), sa taille totale sur disque, et l'état des trois niveaux de sauvegarde : miroir local (Tier 2), cloud personnel (Tier 3a), Hyperscale (Tier 3b). Indique aussi si le Sentinel est actif dans la session courante.",
+    "example": "iloc vault status",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "vault.migrate": {
+    "summary": "Déplace le coffre-fort vers un autre emplacement ou mode de stockage.",
+    "details": "Utile par exemple pour passer du mode historique in-project (snapshots dans .ilocker/, risque de fuite dans Git) vers sibling (dossier voisin, recommandé). L'ancien emplacement n'est jamais supprimé avant que la migration soit confirmée réussie.",
+    "example": "iloc vault migrate --mode sibling",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "caution",
+    "args": {
+      "mode": {
+        "description": "Mode cible : sibling, in-project, system, ou custom (nécessite --dir)."
+      },
+      "dir": {
+        "description": "Chemin cible quand --mode custom est utilisé."
+      }
+    }
+  },
+  "vault.mirror.add": {
+    "summary": "Ajoute un miroir local (Tier 2 de la stratégie 3-2-1) : une copie synchronisée sur un autre disque ou NAS.",
+    "details": "À chaque iloc save, les snapshots sont aussi copiés vers ce chemin. Protège contre la perte du disque principal sans dépendre d'internet ni d'un cloud tiers.",
+    "example": "iloc vault mirror add /Volumes/NAS/backups-ilocker",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {
+      "path": {
+        "description": "Chemin du dossier miroir (créé automatiquement s'il n'existe pas)."
+      }
+    }
+  },
+  "vault.mirror.remove": {
+    "summary": "Retire un miroir local précédemment configuré.",
+    "details": "N'efface pas les fichiers déjà présents dans le miroir — arrête seulement les futures synchronisations vers ce chemin.",
+    "example": "iloc vault mirror remove /Volumes/NAS/backups-ilocker",
+    "prerequisites": [
+      "iloc vault mirror add"
+    ],
+    "danger": "safe",
+    "args": {
+      "path": {
+        "description": "Chemin exact du miroir à retirer, tel qu'ajouté précédemment."
+      }
+    }
+  },
+  "vault.mirror.sync": {
+    "summary": "Force une synchronisation immédiate de tous les miroirs pour le dernier snapshot.",
+    "details": "Normalement automatique à chaque save — utile pour rattraper un miroir qui était débranché lors d'un save précédent.",
+    "example": "iloc vault mirror sync",
+    "prerequisites": [
+      "iloc vault mirror add",
+      "au moins un snapshot existant"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "vault.backup.enable-cloud": {
+    "summary": "Active l'envoi automatique de chaque nouveau snapshot vers votre cloud personnel (Tier 3a).",
+    "details": "Après cette activation, chaque iloc save déclenche aussi un iloc push en arrière-plan vers le profil cloud actif (ou celui précisé). Nécessite un profil cloud déjà configuré via iloc config cloud add.",
+    "example": "iloc vault backup enable-cloud --profile perso",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Nom du profil cloud à utiliser. Omis = profil actif par défaut."
+      }
+    }
+  },
+  "vault.backup.disable-cloud": {
+    "summary": "Désactive l'envoi automatique vers le cloud personnel après chaque snapshot.",
+    "details": "Les snapshots déjà envoyés restent dans le cloud — seule la synchronisation automatique future est arrêtée.",
+    "example": "iloc vault backup disable-cloud",
+    "prerequisites": [
+      "iloc vault backup enable-cloud"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "vault.backup.enable-hyperscale": {
+    "summary": "Active la sauvegarde Hyperscale automatique après chaque snapshot.",
+    "details": "Chaque `iloc save` déclenche ensuite un `iloc hyperscale push` en arrière-plan, non bloquant et best-effort (un échec n'empêche jamais le snapshot local de réussir).",
+    "example": "iloc vault backup enable-hyperscale",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "vault.backup.disable-hyperscale": {
+    "summary": "Désactive la sauvegarde Hyperscale automatique après chaque snapshot.",
+    "details": "Annule le réglage activé par iloc vault backup enable-hyperscale.",
+    "example": "iloc vault backup disable-hyperscale",
+    "prerequisites": [
+      "iloc vault backup enable-hyperscale"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "vault.verify": {
+    "summary": "Vérifie l'intégrité de tous les snapshots en recalculant leur empreinte SHA-256.",
+    "details": "Compare le hash actuel de chaque fichier de chaque snapshot à celui enregistré au moment du save. Détecte une corruption silencieuse (disque défaillant, modification externe accidentelle du coffre-fort). Peut prendre du temps sur un gros historique — parcourt physiquement tous les fichiers de tous les snapshots.",
+    "example": "iloc vault verify",
+    "prerequisites": [
+      "iloc init",
+      "au moins un snapshot existant"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "connect": {
+    "summary": "Connecte un compte GitHub à ilocker via un Personal Access Token.",
+    "details": "Guide pas à pas : donne le lien pour créer un token avec les scopes nécessaires (repo, workflow, read:org, read:user), demande le token (masqué à la saisie), le valide immédiatement contre l'API GitHub, détecte vos organisations et propose d'en choisir une par défaut pour iloc github repo create. Le token est stocké via le trousseau système, ou le fichier chiffré de repli si indisponible (voir la section sécurité). Compatible GitHub Enterprise via une URL d'API personnalisée.",
+    "example": "iloc connect github",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "service": {
+        "description": "Fournisseur à connecter : github, vercel, ou supabase."
+      },
+      "name": {
+        "description": "Nom à donner à ce profil (ex: perso, boulot). Demandé interactivement si omis."
+      },
+      "token": {
+        "description": "Token fourni directement (évite la saisie masquée) — utile pour un script ou une CI."
+      },
+      "api_url": {
+        "description": "URL de l'API personnalisée, pour GitHub Enterprise Server (par défaut : https://api.github.com)."
+      }
+    }
+  },
+  "github.list": {
+    "summary": "Liste les comptes GitHub connectés à ilocker.",
+    "details": "Affiche chaque profil (nom, login GitHub, org par défaut, date de connexion) et indique lequel est actif (marqueur ●).",
+    "example": "iloc github list",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "github.use": {
+    "summary": "Change le compte GitHub actif parmi ceux déjà connectés.",
+    "details": "Bascule le profil par défaut utilisé par toutes les commandes github quand --profile n'est pas précisé explicitement.",
+    "example": "iloc github use boulot",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom du profil à activer (voir iloc github list)."
+      }
+    }
+  },
+  "github.status": {
+    "summary": "Affiche le compte GitHub actuellement connecté et vérifie que le token est toujours valide.",
+    "details": "Fait un appel réel à l'API GitHub pour confirmer que le token n'a pas été révoqué ou expiré — pas seulement une lecture locale.",
+    "example": "iloc github status",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil à vérifier. Omis = profil actif."
+      }
+    }
+  },
+  "github.remove": {
+    "summary": "Déconnecte un compte GitHub d'ilocker et supprime son token du trousseau.",
+    "details": "Ne révoque PAS le token côté GitHub lui-même (il reste valide si utilisé ailleurs) — seulement la connexion locale à ilocker est supprimée. Pour révoquer réellement, faites-le depuis github.com/settings/tokens.",
+    "example": "iloc github remove boulot",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Nom du profil à déconnecter."
+      }
+    }
+  },
+  "github.repo.create": {
+    "summary": "Crée un nouveau repository GitHub, sur votre compte ou une organisation.",
+    "details": "Mode interactif par défaut (demande nom, description, visibilité si non précisés). Avec --yes, utilise des défauts sûrs : nom du dossier courant, et surtout — visibilité PRIVÉE par défaut même sans --private explicite, pour éviter qu'un script publie accidentellement du code en public. Si le dossier courant est un repo Git, propose de configurer automatiquement le remote origin (SSH) et affiche les commandes suivantes à lancer.",
+    "example": "iloc github repo create mon-projet --private --auto-init",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom du repo. Omis = nom du dossier courant."
+      },
+      "description": {
+        "description": "Description courte affichée sur la page GitHub du repo."
+      },
+      "private": {
+        "description": "Crée le repo en visibilité privée."
+      },
+      "public": {
+        "description": "Crée le repo en visibilité publique (prioritaire sur --private si les deux sont donnés)."
+      },
+      "org": {
+        "description": "Organisation propriétaire du repo. Omis = votre compte personnel, ou l'org par défaut définie à la connexion."
+      },
+      "auto_init": {
+        "description": "Initialise le repo avec un commit initial (README.md) au lieu de le laisser vide."
+      },
+      "topics": {
+        "description": "Ajoute un ou plusieurs topics (mots-clés) au repo — répétable."
+      },
+      "license": {
+        "description": "Licence à appliquer (ex: mit, apache-2.0)."
+      },
+      "gitignore": {
+        "description": "Template .gitignore à générer (ex: Node, Rust, Python)."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser. Omis = profil actif."
+      },
+      "yes": {
+        "description": "Ignore toutes les confirmations et utilise les défauts sûrs pour les champs non précisés."
+      }
+    }
+  },
+  "github.repo.list": {
+    "summary": "Liste vos repositories GitHub, avec filtres de visibilité et d'organisation.",
+    "details": "Sans --org, liste vos repos personnels plus ceux où vous êtes collaborateur. Avec --org, liste les repos de cette organisation.",
+    "example": "iloc github repo list --org ma-boite --private",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "org": {
+        "description": "Organisation dont lister les repos, plutôt que les vôtres."
+      },
+      "private": {
+        "description": "N'affiche que les repos privés."
+      },
+      "public": {
+        "description": "N'affiche que les repos publics."
+      },
+      "fork": {
+        "description": "N'affiche que les forks."
+      },
+      "limit": {
+        "description": "Nombre maximum de repos affichés (défaut : 30)."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.repo.view": {
+    "summary": "Affiche les détails complets d'un repository : stars, forks, issues ouvertes, langage, topics, URLs de clone.",
+    "example": "iloc github repo view bechir/ilocker",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Sans argument, utilise le repo du dossier courant (détecté via git remote origin).",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé au format owner/repo. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.repo.delete": {
+    "summary": "Supprime définitivement un repository GitHub — action irréversible.",
+    "details": "Double confirmation : il faut d'abord taper exactement 'owner/repo' pour prouver l'intention, puis confirmer une seconde fois (sauf --yes). Le repo et tout son historique Git sont perdus sans recours.",
+    "example": "iloc github repo delete bechir/ancien-projet",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "destructive",
+    "args": {
+      "owner_repo": {
+        "description": "Repo à supprimer, au format owner/repo. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la seconde confirmation (la saisie du nom exact reste requise)."
+      }
+    }
+  },
+  "github.repo.archive": {
+    "summary": "Archive (lecture seule) ou désarchive un repository.",
+    "details": "Un repo archivé devient lecture seule sur GitHub : plus d'issues, PR, ni push possibles jusqu'au désarchivage.",
+    "example": "iloc github repo archive bechir/vieux-projet",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "unarchive": {
+        "description": "Désarchive au lieu d'archiver."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.repo.fork": {
+    "summary": "Fork un repository dans votre compte ou une organisation.",
+    "example": "iloc github repo fork torvalds/linux --org ma-boite",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Le fork est créé de manière asynchrone côté GitHub — l'URL affichée peut mettre quelques secondes à devenir accessible pour les gros repos.",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo à forker, au format owner/repo (obligatoire, pas d'auto-détection)."
+      },
+      "org": {
+        "description": "Organisation de destination. Omis = votre compte personnel."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.repo.transfer": {
+    "summary": "Transfère la propriété d'un repository vers un autre compte ou une organisation.",
+    "details": "Le nouveau propriétaire doit généralement accepter le transfert côté GitHub avant qu'il soit effectif.",
+    "example": "iloc github repo transfer ma-boite bechir/projet",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "destructive",
+    "args": {
+      "new_owner": {
+        "description": "Compte ou organisation qui recevra le repo."
+      },
+      "owner_repo": {
+        "description": "Repo à transférer. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.repo.topics": {
+    "summary": "Ajoute, retire, ou remplace entièrement les topics (mots-clés) d'un repository.",
+    "details": "--set remplace tous les topics existants. --add/--remove modifient la liste actuelle sans y toucher entièrement — combinables.",
+    "example": "iloc github repo topics --add rust --add cli",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "add": {
+        "description": "Topic(s) à ajouter — répétable."
+      },
+      "remove": {
+        "description": "Topic(s) à retirer — répétable."
+      },
+      "set": {
+        "description": "Remplace tous les topics par cette liste — répétable, prioritaire sur --add/--remove."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.repo.visibility": {
+    "summary": "Change la visibilité d'un repository entre privé et public.",
+    "details": "Passer un repo en public le rend immédiatement accessible à tous, y compris son historique complet — vérifiez qu'aucun secret n'y a jamais été commité avant.",
+    "example": "iloc github repo visibility --private",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "destructive",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "private": {
+        "description": "Rend le repo privé."
+      },
+      "public": {
+        "description": "Rend le repo public. L'un des deux flags est obligatoire."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.repo.rename": {
+    "summary": "Renomme un repository GitHub.",
+    "details": "GitHub redirige automatiquement l'ancienne URL vers la nouvelle pendant un certain temps, mais le remote Git local (origin) doit être mis à jour manuellement — la commande affiche la ligne exacte à exécuter après le renommage.",
+    "example": "iloc github repo rename nouveau-nom",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "new_name": {
+        "description": "Nouveau nom du repo."
+      },
+      "owner_repo": {
+        "description": "Repo à renommer. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.branch.list": {
+    "summary": "Liste les branches d'un repository, en signalant la branche par défaut et celles protégées.",
+    "example": "iloc github branch list",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "La branche par défaut est toujours affichée en premier, distinctement des autres.",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.branch.create": {
+    "summary": "Crée une nouvelle branche à partir d'une branche existante.",
+    "example": "iloc github branch create feature/auth --from main",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Crée la branche directement côté GitHub (pas besoin de la avoir en local au préalable).",
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom de la nouvelle branche."
+      },
+      "from": {
+        "description": "Branche source. Omis = branche par défaut du repo."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.branch.delete": {
+    "summary": "Supprime une branche distante sur GitHub.",
+    "example": "iloc github branch delete feature/ancienne",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Ne supprime que la branche distante — une copie locale éventuelle n'est pas affectée.",
+    "danger": "destructive",
+    "args": {
+      "name": {
+        "description": "Nom de la branche à supprimer."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.branch.protect": {
+    "summary": "Active des règles de protection sur une branche : reviews obligatoires, status checks requis, etc.",
+    "details": "Les règles cumulent : vous pouvez exiger un nombre minimum de reviews, des status checks CI nommés, empêcher les admins de contourner les règles, exiger un historique linéaire, et bloquer force-push/suppression.",
+    "example": "iloc github branch protect main --require-pr --min-reviews 2",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Branche à protéger."
+      },
+      "checks": {
+        "description": "Nom(s) de status check CI requis avant merge — répétable."
+      },
+      "require_pr": {
+        "description": "Exige qu'une Pull Request soit utilisée (interdit les push directs)."
+      },
+      "min_reviews": {
+        "description": "Nombre minimum d'approbations de review requises avant merge."
+      },
+      "linear": {
+        "description": "Exige un historique linéaire (interdit les commits de merge classiques)."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "enforce_admins": {
+        "description": "Applique aussi les règles aux administrateurs du repo (sinon ils peuvent les contourner)."
+      },
+      "allow_force_pushes": {
+        "description": "Autorise malgré tout le force-push sur cette branche protégée."
+      },
+      "allow_deletions": {
+        "description": "Autorise malgré tout la suppression de cette branche protégée."
+      }
+    }
+  },
+  "github.branch.unprotect": {
+    "summary": "Retire toutes les règles de protection d'une branche.",
+    "example": "iloc github branch unprotect main",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Retire l'ensemble des règles en une fois — pas de retrait partiel.",
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Branche à déprotéger."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.branch.default": {
+    "summary": "Change la branche par défaut du repository (celle affichée en premier, ciblée par les PR sans base explicite).",
+    "example": "iloc github branch default main",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "La branche visée doit déjà exister sur GitHub.",
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Branche à définir comme branche par défaut."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.list": {
+    "summary": "Liste les issues d'un repository, filtrables par état, labels et assigné.",
+    "example": "iloc github issue list --state open --labels bug",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "État par défaut : open. Utilisez --state all pour tout voir, ou --state closed pour l'historique.",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "state": {
+        "description": "open, closed, ou all (défaut : open)."
+      },
+      "labels": {
+        "description": "Filtre par label(s) — répétable."
+      },
+      "assignee": {
+        "description": "Filtre par nom d'utilisateur assigné."
+      },
+      "limit": {
+        "description": "Nombre maximum d'issues affichées."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.create": {
+    "summary": "Crée une nouvelle issue sur un repository.",
+    "example": "iloc github issue create --title \"Bug : crash au démarrage\"",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Mode interactif si --title est omis (demande titre puis description).",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "title": {
+        "description": "Titre de l'issue (obligatoire, demandé si omis)."
+      },
+      "body": {
+        "description": "Description détaillée de l'issue."
+      },
+      "labels": {
+        "description": "Label(s) à appliquer — répétable."
+      },
+      "assignees": {
+        "description": "Utilisateur(s) à assigner — répétable."
+      },
+      "milestone": {
+        "description": "Numéro du milestone à associer."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.view": {
+    "summary": "Affiche le détail complet d'une issue : titre, état, labels, assignés, description.",
+    "example": "iloc github issue view 42",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "La description est tronquée aux 20 premières lignes dans le terminal — le lien vers la page GitHub complète est toujours affiché.",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de l'issue."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.close": {
+    "summary": "Ferme une issue.",
+    "example": "iloc github issue close 42",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "L'option --reason (completed ou not_planned) est transmise à l'API GitHub et apparaît dans l'historique de l'issue.",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de l'issue à fermer."
+      },
+      "reason": {
+        "description": "Raison de fermeture : completed (résolue) ou not_planned (abandonnée). Omis = aucune raison précisée."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.reopen": {
+    "summary": "Rouvre une issue précédemment fermée.",
+    "example": "iloc github issue reopen 42",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de l'issue à rouvrir."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.comment": {
+    "summary": "Ajoute un commentaire à une issue.",
+    "example": "iloc github issue comment 42 --body \"Corrigé dans la PR #45\"",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Mode interactif si --body est omis.",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de l'issue."
+      },
+      "body": {
+        "description": "Texte du commentaire (obligatoire, demandé si omis)."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.assign": {
+    "summary": "Assigne ou retire des utilisateurs d'une issue.",
+    "example": "iloc github issue assign 42 --users bechir",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Avec --unassign, retire les utilisateurs listés au lieu de les ajouter — la liste actuelle est d'abord relue pour ne retirer que ceux demandés sans toucher aux autres.",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de l'issue."
+      },
+      "users": {
+        "description": "Utilisateur(s) à assigner (ou retirer avec --unassign) — répétable."
+      },
+      "unassign": {
+        "description": "Retire les utilisateurs listés au lieu de les ajouter."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.issue.label": {
+    "summary": "Ajoute ou retire des labels d'une issue.",
+    "example": "iloc github issue label 42 --add priorité-haute",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Les labels actuels sont relus avant modification — --add et --remove peuvent être combinés dans le même appel.",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de l'issue."
+      },
+      "add": {
+        "description": "Label(s) à ajouter — répétable."
+      },
+      "remove": {
+        "description": "Label(s) à retirer — répétable."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.list": {
+    "summary": "Liste les Pull Requests d'un repository, filtrables par état et branche cible.",
+    "example": "iloc github pr list --state open",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "État par défaut : open.",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "state": {
+        "description": "open, closed, ou all (défaut : open)."
+      },
+      "base": {
+        "description": "Filtre sur la branche cible (base) des PR."
+      },
+      "limit": {
+        "description": "Nombre maximum de PR affichées."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.create": {
+    "summary": "Crée une Pull Request.",
+    "details": "La branche source (head) est celle actuellement checkoutée en local par défaut. La branche cible (base) est la branche par défaut du repo si non précisée. Mode interactif pour titre/description si omis.",
+    "example": "iloc github pr create --title \"Ajoute l'authentification\"",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "title": {
+        "description": "Titre de la PR (obligatoire, demandé si omis)."
+      },
+      "body": {
+        "description": "Description de la PR."
+      },
+      "head": {
+        "description": "Branche source. Omis = branche Git courante."
+      },
+      "base": {
+        "description": "Branche cible. Omis = branche par défaut du repo."
+      },
+      "draft": {
+        "description": "Crée la PR en brouillon (draft), non prête à review."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.view": {
+    "summary": "Affiche le détail complet d'une PR : état (open/draft/merged/closed), branches, mergeabilité, description.",
+    "example": "iloc github pr view 45",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.merge": {
+    "summary": "Merge une Pull Request.",
+    "details": "Trois méthodes possibles : merge (commit de merge classique), squash (un seul commit), rebase (rejoue les commits sans merge commit).",
+    "example": "iloc github pr merge 45 --method squash",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR à merger."
+      },
+      "method": {
+        "description": "merge, squash, ou rebase (défaut : merge)."
+      },
+      "title": {
+        "description": "Titre du commit de merge (surtout utile avec --method squash)."
+      },
+      "message": {
+        "description": "Message additionnel du commit de merge."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.pr.review": {
+    "summary": "Demande une review sur une PR, à des utilisateurs et/ou des équipes.",
+    "example": "iloc github pr review 45 --reviewers alice --reviewers bob",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR."
+      },
+      "reviewers": {
+        "description": "Utilisateur(s) à qui demander une review — répétable."
+      },
+      "teams": {
+        "description": "Équipe(s) à qui demander une review — répétable."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.checkout": {
+    "summary": "Checkout localement la branche source d'une PR pour la tester ou la modifier.",
+    "details": "Lance automatiquement git fetch origin puis git checkout — si l'un des deux échoue (ex: modifications locales non commitées), affiche la commande exacte à lancer manuellement au lieu d'échouer silencieusement.",
+    "example": "iloc github pr checkout 45",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR à checkout."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.ready": {
+    "summary": "Marque une PR brouillon (draft) comme prête pour review, ou l'inverse.",
+    "example": "iloc github pr ready 45",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Avec --draft, fait l'inverse : reconvertit une PR prête en brouillon.",
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR."
+      },
+      "draft": {
+        "description": "Reconvertit en brouillon au lieu de marquer comme prête."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.pr.close": {
+    "summary": "Ferme une PR sans la merger.",
+    "example": "iloc github pr close 45",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Différent de merge : le code de la branche source n'est jamais intégré à la branche cible.",
+    "danger": "caution",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR à fermer."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.pr.update-branch": {
+    "summary": "Met à jour la branche d'une PR avec les derniers changements de sa branche cible.",
+    "details": "Équivalent au bouton « Update branch » de l'interface GitHub — utile quand la branche cible a avancé depuis l'ouverture de la PR.",
+    "example": "iloc github pr update-branch 45",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "number": {
+        "description": "Numéro de la PR."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.release.list": {
+    "summary": "Liste les releases d'un repository.",
+    "example": "iloc github release list",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "limit": {
+        "description": "Nombre maximum de releases affichées."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.release.create": {
+    "summary": "Crée une release à partir d'un tag Git.",
+    "details": "Mode interactif si --tag est omis, sauf avec --yes qui exige --tag explicitement (pas de prompt bloquant en mode non-interactif). --generate-notes laisse GitHub générer automatiquement les notes de version depuis les PR mergées depuis la dernière release.",
+    "example": "iloc github release create --tag v1.0.0 --generate-notes",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "tag": {
+        "description": "Tag Git source de la release (obligatoire)."
+      },
+      "name": {
+        "description": "Nom affiché de la release. Omis = même valeur que le tag."
+      },
+      "body": {
+        "description": "Notes de version. Ignoré si --generate-notes est utilisé."
+      },
+      "draft": {
+        "description": "Crée la release en brouillon, non publiée publiquement."
+      },
+      "prerelease": {
+        "description": "Marque la release comme pré-version (beta, RC...)."
+      },
+      "target": {
+        "description": "Commit ou branche cible du tag, si le tag n'existe pas encore."
+      },
+      "generate_notes": {
+        "description": "Génère automatiquement les notes depuis les PR mergées depuis la dernière release."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore les confirmations — --tag devient alors obligatoire."
+      }
+    }
+  },
+  "github.release.delete": {
+    "summary": "Supprime une release.",
+    "details": "Ne supprime pas le tag Git lui-même, seulement la release GitHub (notes, assets attachés) qui lui est associée.",
+    "example": "iloc github release delete v0.9.0-beta",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "destructive",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "tag": {
+        "description": "Tag de la release à supprimer."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.release.upload": {
+    "summary": "Attache un fichier (binaire, archive...) à une release existante.",
+    "details": "Le type de contenu (Content-Type) est deviné automatiquement depuis l'extension du fichier si non précisé.",
+    "example": "iloc github release upload v1.0.0 ./iloc-linux-x86_64",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "tag": {
+        "description": "Tag de la release cible."
+      },
+      "file": {
+        "description": "Chemin du fichier local à uploader."
+      },
+      "name": {
+        "description": "Nom de l'asset une fois attaché. Omis = nom du fichier."
+      },
+      "content_type": {
+        "description": "Type MIME de l'asset. Omis = deviné depuis l'extension."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.actions.list": {
+    "summary": "Liste les workflows GitHub Actions configurés sur un repository.",
+    "example": "iloc github actions list",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.actions.run": {
+    "summary": "Déclenche manuellement l'exécution d'un workflow (workflow_dispatch).",
+    "details": "Le workflow ciblé doit avoir un trigger `workflow_dispatch` défini dans son YAML pour pouvoir être déclenché ainsi. Les inputs se passent au format clé=valeur.",
+    "example": "iloc github actions run release.yml --branch main",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "workflow": {
+        "description": "Nom du fichier de workflow (ex: release.yml) ou son ID."
+      },
+      "branch": {
+        "description": "Branche sur laquelle exécuter le workflow. Omis = branche par défaut."
+      },
+      "inputs": {
+        "description": "Paramètre(s) au format clé=valeur, si le workflow en définit — répétable."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.actions.status": {
+    "summary": "Affiche les exécutions récentes des workflows (runs), avec leur état.",
+    "example": "iloc github actions status --workflow release.yml",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "workflow": {
+        "description": "Filtre sur un workflow précis."
+      },
+      "branch": {
+        "description": "Filtre sur une branche précise."
+      },
+      "limit": {
+        "description": "Nombre maximum de runs affichés."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.actions.cancel": {
+    "summary": "Annule un run de workflow en cours d'exécution.",
+    "example": "iloc github actions cancel 123456789",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "Le run_id s'obtient via iloc github actions status.",
+    "danger": "caution",
+    "args": {
+      "run_id": {
+        "description": "Identifiant du run à annuler (voir iloc github actions status)."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.actions.rerun": {
+    "summary": "Relance un run de workflow terminé (par exemple après un échec).",
+    "example": "iloc github actions rerun 123456789",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "run_id": {
+        "description": "Identifiant du run à relancer."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.secret.list": {
+    "summary": "Liste les noms des secrets GitHub Actions configurés sur un repository.",
+    "details": "GitHub ne renvoie jamais les valeurs des secrets par API, uniquement leurs noms — c'est une limitation de sécurité de GitHub, pas d'ilocker.",
+    "example": "iloc github secret list",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.secret.set": {
+    "summary": "Crée ou met à jour un secret GitHub Actions.",
+    "details": "La valeur est chiffrée localement avant l'envoi, avec la clé publique du repo (protocole « sealed box » de libsodium — X25519 + BLAKE2b + chiffrement authentifié) : GitHub ne reçoit jamais la valeur en clair sur le réseau, seul le repo peut la déchiffrer côté serveur. Saisie masquée si --value est omis.",
+    "example": "iloc github secret set DATABASE_URL",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "name": {
+        "description": "Nom du secret (ex: DATABASE_URL)."
+      },
+      "value": {
+        "description": "Valeur du secret. Omis = saisie masquée interactive."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.secret.delete": {
+    "summary": "Supprime un secret GitHub Actions.",
+    "example": "iloc github secret delete OLD_API_KEY",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "destructive",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "name": {
+        "description": "Nom du secret à supprimer."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.collab.list": {
+    "summary": "Liste les collaborateurs d'un repository et leur niveau de permission.",
+    "example": "iloc github collab list",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.collab.add": {
+    "summary": "Invite un utilisateur comme collaborateur sur un repository.",
+    "details": "Une invitation est envoyée à l'utilisateur — l'accès n'est effectif qu'après acceptation de sa part, pas immédiatement.",
+    "example": "iloc github collab add alice --permission push",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "username": {
+        "description": "Nom d'utilisateur GitHub à inviter."
+      },
+      "permission": {
+        "description": "Niveau d'accès : pull, push, admin, maintain, ou triage."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.collab.remove": {
+    "summary": "Retire un collaborateur d'un repository.",
+    "example": "iloc github collab remove alice",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "destructive",
+    "args": {
+      "username": {
+        "description": "Nom d'utilisateur à retirer."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.webhook.list": {
+    "summary": "Liste les webhooks configurés sur un repository, avec leur URL et statut (actif/inactif).",
+    "example": "iloc github webhook list",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.webhook.create": {
+    "summary": "Crée un webhook qui notifiera une URL externe lors d'événements du repository.",
+    "details": "Événement par défaut si aucun n'est précisé : push uniquement. Un secret partagé permet à l'URL réceptrice de vérifier l'authenticité des requêtes reçues.",
+    "example": "iloc github webhook create https://mon-serveur.com/hook --events push --events pull_request",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "caution",
+    "args": {
+      "url": {
+        "description": "URL qui recevra les notifications du webhook."
+      },
+      "events": {
+        "description": "Événement(s) déclencheurs (ex: push, pull_request, issues) — répétable. Omis = push uniquement."
+      },
+      "content_type": {
+        "description": "Format du payload envoyé : json ou form (défaut : json)."
+      },
+      "secret": {
+        "description": "Secret partagé pour signer les requêtes envoyées (permet de vérifier leur authenticité côté récepteur)."
+      },
+      "inactive": {
+        "description": "Crée le webhook désactivé (ne recevra rien tant qu'il n'est pas activé manuellement sur GitHub)."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.webhook.delete": {
+    "summary": "Supprime un webhook.",
+    "example": "iloc github webhook delete 123456",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "L'ID du webhook s'obtient via iloc github webhook list.",
+    "danger": "destructive",
+    "args": {
+      "hook_id": {
+        "description": "Identifiant du webhook à supprimer."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "github.webhook.ping": {
+    "summary": "Envoie un événement de test (ping) à un webhook pour vérifier qu'il fonctionne.",
+    "example": "iloc github webhook ping 123456",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {
+      "hook_id": {
+        "description": "Identifiant du webhook à tester."
+      },
+      "owner_repo": {
+        "description": "Repo ciblé. Omis = repo du dossier courant."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "github.search.repos": {
+    "summary": "Recherche des repositories sur GitHub par mots-clés, avec la syntaxe de recherche GitHub complète.",
+    "details": "Supporte les qualifieurs de recherche GitHub standards (ex: language:rust, stars:>100, org:...).",
+    "example": "iloc github search repos \"language:rust stars:>1000\"",
+    "prerequisites": [
+      "iloc connect github"
+    ],
+    "danger": "safe",
+    "args": {
+      "query": {
+        "description": "Requête de recherche (syntaxe GitHub : mots-clés + qualifieurs)."
+      },
+      "limit": {
+        "description": "Nombre maximum de résultats affichés."
+      },
+      "profile": {
+        "description": "Profil GitHub à utiliser."
+      }
+    }
+  },
+  "vercel.list": {
+    "summary": "Liste les comptes Vercel connectés.",
+    "details": "",
+    "example": "iloc vercel list",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "vercel.use": {
+    "summary": "Change le compte Vercel actif.",
+    "details": "",
+    "example": "iloc vercel use boulot",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom du profil à activer."
+      }
+    }
+  },
+  "vercel.status": {
+    "summary": "Affiche le compte Vercel connecté et vérifie que le token est valide.",
+    "details": "",
+    "example": "iloc vercel status",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil à vérifier."
+      }
+    }
+  },
+  "vercel.remove": {
+    "summary": "Déconnecte un compte Vercel d'ilocker.",
+    "details": "Ne révoque pas le token côté Vercel — seulement la connexion locale à ilocker.",
+    "example": "iloc vercel remove boulot",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Nom du profil à déconnecter."
+      }
+    }
+  },
+  "vercel.deploy": {
+    "summary": "Déclenche un déploiement Vercel du projet lié.",
+    "details": "Vers preview par défaut, ou production avec --prod. Avec --wait, la commande reste active et affiche l'état en direct jusqu'à ce que le déploiement soit prêt ou en erreur (--timeout contrôle la durée max d'attente). Sans --wait, la commande rend la main immédiatement après le déclenchement.",
+    "example": "iloc vercel deploy --prod --wait",
+    "prerequisites": [
+      "iloc vercel project link"
+    ],
+    "danger": "caution",
+    "args": {
+      "force": {
+        "description": "Force un nouveau déploiement même sans changement détecté."
+      },
+      "wait": {
+        "description": "Attend et affiche l'état du déploiement en direct jusqu'à READY ou ERROR."
+      },
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant (.vercel/project.json)."
+      },
+      "timeout": {
+        "description": "Délai maximum d'attente en secondes avec --wait."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      },
+      "prod": {
+        "description": "Déploie vers l'environnement de production plutôt que preview."
+      },
+      "branch": {
+        "description": "Branche Git source du déploiement."
+      },
+      "sha": {
+        "description": "Commit précis à déployer."
+      }
+    }
+  },
+  "vercel.inspect": {
+    "summary": "Affiche le dernier déploiement prêt (READY) du projet lié dans le dossier courant.",
+    "details": "Nécessite qu'un projet soit lié localement (.vercel/project.json), contrairement à deployment view qui accepte un ID explicite.",
+    "example": "iloc vercel inspect",
+    "prerequisites": [
+      "iloc vercel project link"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.project.list": {
+    "summary": "Liste vos projets Vercel.",
+    "details": "",
+    "example": "iloc vercel project list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "limit": {
+        "description": "Nombre maximum de projets affichés."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.project.create": {
+    "summary": "Crée un nouveau projet Vercel.",
+    "details": "Mode interactif par défaut pour le nom et le framework. Avec --link, crée aussi le fichier .vercel/project.json dans le dossier courant pour lier immédiatement ce projet localement.",
+    "example": "iloc vercel project create mon-site --framework nextjs --link",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom du projet. Omis = nom du dossier courant."
+      },
+      "framework": {
+        "description": "Framework utilisé (nextjs, react, vue, nuxt, svelte, angular, remix, astro, gatsby...). Omis = auto-détection par Vercel."
+      },
+      "git_repo": {
+        "description": "Repo Git à lier au projet pour les déploiements automatiques."
+      },
+      "git_branch": {
+        "description": "Branche de production du repo lié."
+      },
+      "link": {
+        "description": "Crée .vercel/project.json dans le dossier courant après création."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore les confirmations et utilise les défauts."
+      },
+      "root": {
+        "description": "Sous-dossier racine du projet, si le code n'est pas à la racine du repo."
+      },
+      "build": {
+        "description": "Commande de build personnalisée (remplace celle du framework détecté)."
+      },
+      "output": {
+        "description": "Dossier de sortie du build."
+      },
+      "install": {
+        "description": "Commande d'installation des dépendances personnalisée."
+      }
+    }
+  },
+  "vercel.project.view": {
+    "summary": "Affiche le détail complet d'un projet : framework, configuration de build, dépôt Git lié, derniers déploiements.",
+    "details": "",
+    "example": "iloc vercel project view mon-site",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "project": {
+        "description": "Projet ciblé (nom ou ID). Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.project.update": {
+    "summary": "Met à jour la configuration d'un projet Vercel existant.",
+    "details": "Seuls les champs précisés sont modifiés — les autres restent inchangés.",
+    "example": "iloc vercel project update --build-command \"npm run build:prod\"",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "name": {
+        "description": "Nouveau nom du projet."
+      },
+      "framework": {
+        "description": "Nouveau framework déclaré."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "root": {
+        "description": "Nouveau sous-dossier racine."
+      },
+      "build": {
+        "description": "Nouvelle commande de build."
+      },
+      "output": {
+        "description": "Nouveau dossier de sortie."
+      },
+      "install": {
+        "description": "Nouvelle commande d'installation."
+      },
+      "node": {
+        "description": "Version de Node.js à utiliser pour le build."
+      },
+      "prod_branch": {
+        "description": "Nouvelle branche de production."
+      }
+    }
+  },
+  "vercel.project.delete": {
+    "summary": "Supprime définitivement un projet Vercel.",
+    "details": "Supprime aussi la liaison locale (.vercel/project.json) si elle pointait vers ce projet. Tous les déploiements associés sont perdus.",
+    "example": "iloc vercel project delete ancien-site",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "project": {
+        "description": "Projet à supprimer. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.project.link": {
+    "summary": "Lie le dossier courant à un projet Vercel existant (crée .vercel/project.json).",
+    "details": "Sans argument, affiche la liste de vos projets et demande de choisir par numéro ou par nom. Nécessaire avant iloc vercel deploy ou iloc vercel inspect sans --project explicite.",
+    "example": "iloc vercel project link mon-site",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "project": {
+        "description": "Nom du projet à lier. Omis = sélection interactive."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.project.unlink": {
+    "summary": "Retire la liaison locale entre le dossier courant et un projet Vercel.",
+    "details": "Supprime seulement .vercel/project.json — le projet lui-même n'est pas affecté sur Vercel.",
+    "example": "iloc vercel project unlink",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.deployment.list": {
+    "summary": "Liste les déploiements, du projet lié ou d'un projet précisé.",
+    "details": "",
+    "example": "iloc vercel deployment list --target production",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "target": {
+        "description": "Filtre : production ou preview."
+      },
+      "state": {
+        "description": "Filtre par état (READY, ERROR, BUILDING...)."
+      },
+      "limit": {
+        "description": "Nombre maximum affiché."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.deployment.view": {
+    "summary": "Affiche le détail complet d'un déploiement précis.",
+    "details": "",
+    "example": "iloc vercel deployment view dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "id": {
+        "description": "ID ou URL du déploiement."
+      }
+    }
+  },
+  "vercel.deployment.cancel": {
+    "summary": "Annule un déploiement en cours de build.",
+    "details": "",
+    "example": "iloc vercel deployment cancel dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "id": {
+        "description": "ID du déploiement à annuler."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.deployment.delete": {
+    "summary": "Supprime définitivement un déploiement.",
+    "details": "",
+    "example": "iloc vercel deployment delete dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "id": {
+        "description": "ID du déploiement à supprimer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.deployment.redeploy": {
+    "summary": "Relance un nouveau déploiement à partir d'un déploiement existant (même code source).",
+    "details": "",
+    "example": "iloc vercel deployment redeploy dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "id": {
+        "description": "ID du déploiement à relancer."
+      },
+      "target": {
+        "description": "Environnement cible du nouveau déploiement."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.deployment.promote": {
+    "summary": "Promeut un déploiement preview au rang de déploiement de production.",
+    "details": "Bascule le trafic de production vers ce déploiement sans nécessiter un nouveau build.",
+    "example": "iloc vercel deployment promote dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "id": {
+        "description": "ID du déploiement à promouvoir."
+      },
+      "project": {
+        "description": "Projet concerné. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.deployment.logs": {
+    "summary": "Affiche les logs de build et d'exécution d'un déploiement.",
+    "details": "Les lignes d'erreur et d'avertissement sont mises en évidence visuellement.",
+    "example": "iloc vercel deployment logs dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "id": {
+        "description": "ID du déploiement."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.deployment.files": {
+    "summary": "Affiche l'arborescence des fichiers déployés dans un déploiement.",
+    "details": "",
+    "example": "iloc vercel deployment files dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "id": {
+        "description": "ID du déploiement."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.env.list": {
+    "summary": "Liste les variables d'environnement d'un projet.",
+    "details": "",
+    "example": "iloc vercel env list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.env.add": {
+    "summary": "Ajoute ou met à jour une variable d'environnement.",
+    "details": "Sans --targets, la variable est appliquée à production, preview, ET development simultanément. Saisie masquée si --value est omis. Chiffrée par défaut (--env-type encrypted).",
+    "example": "iloc vercel env add DATABASE_URL --targets production",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "key": {
+        "description": "Nom de la variable."
+      },
+      "value": {
+        "description": "Valeur de la variable. Omis = saisie masquée."
+      },
+      "env_type": {
+        "description": "encrypted (défaut, recommandé) ou plain."
+      },
+      "git_branch": {
+        "description": "Limite la variable à une branche Git précise (preview uniquement)."
+      },
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "target": {
+        "description": "Environnement(s) cible(s) : production, preview, development — répétable. Omis = les trois."
+      }
+    }
+  },
+  "vercel.env.remove": {
+    "summary": "Supprime une variable d'environnement.",
+    "details": "Sans --target, supprime la variable de TOUS les environnements où elle est définie.",
+    "example": "iloc vercel env remove DATABASE_URL --target preview",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "key": {
+        "description": "Nom de la variable à supprimer."
+      },
+      "target": {
+        "description": "Limite la suppression à cet environnement précis. Omis = tous."
+      },
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.env.pull": {
+    "summary": "Télécharge les variables d'environnement d'un projet dans un fichier .env local.",
+    "details": "Écrit .env.local par défaut, et l'ajoute automatiquement au .gitignore s'il existe (pour éviter de committer des secrets par erreur). Cible development par défaut.",
+    "example": "iloc vercel env pull",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "output": {
+        "description": "Fichier de sortie. Omis = .env.local."
+      },
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Écrase le fichier de sortie sans demander, s'il existe déjà."
+      },
+      "target": {
+        "description": "Environnement(s) à exporter — répétable. Omis = development."
+      }
+    }
+  },
+  "vercel.env.push": {
+    "summary": "Envoie les variables d'un fichier .env local vers un projet Vercel.",
+    "details": "Sans --input, cherche automatiquement .env.local puis .env.development puis .env, dans cet ordre de priorité. Affiche la liste des clés avant confirmation (jamais les valeurs). Envoie chaque variable individuellement — un échec sur une variable n'empêche pas les suivantes, le résumé final indique le nombre de succès et d'échecs.",
+    "example": "iloc vercel env push --targets production",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "input": {
+        "description": "Fichier .env source. Omis = détection automatique."
+      },
+      "project": {
+        "description": "Projet ciblé. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      },
+      "target": {
+        "description": "Environnement(s) cible(s) — répétable. Omis = les trois."
+      }
+    }
+  },
+  "vercel.domain.list": {
+    "summary": "Liste vos domaines Vercel, ou ceux liés à un projet précis.",
+    "details": "",
+    "example": "iloc vercel domain list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "project": {
+        "description": "Limite aux domaines de ce projet."
+      },
+      "limit": {
+        "description": "Nombre maximum affiché."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.domain.add": {
+    "summary": "Ajoute un domaine à votre compte, ou le lie à un projet précis.",
+    "details": "Après ajout, les DNS doivent être configurés manuellement selon les instructions affichées par Vercel.",
+    "example": "iloc vercel domain add exemple.com --project mon-site",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "domain": {
+        "description": "Nom de domaine à ajouter."
+      },
+      "project": {
+        "description": "Projet auquel lier le domaine. Omis = ajout au compte seulement."
+      },
+      "git_branch": {
+        "description": "Limite le domaine à une branche précise (domaine de preview)."
+      },
+      "redirect": {
+        "description": "Domaine vers lequel rediriger celui-ci."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.domain.remove": {
+    "summary": "Retire un domaine du compte ou d'un projet.",
+    "details": "",
+    "example": "iloc vercel domain remove exemple.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "domain": {
+        "description": "Domaine à retirer."
+      },
+      "project": {
+        "description": "Si précisé, retire seulement le lien avec ce projet plutôt que le domaine entier."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.domain.inspect": {
+    "summary": "Vérifie la configuration DNS d'un domaine et affiche les éventuelles erreurs.",
+    "details": "",
+    "example": "iloc vercel domain inspect exemple.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "domain": {
+        "description": "Domaine à inspecter."
+      },
+      "project": {
+        "description": "Vérifie dans le contexte de ce projet précis."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.domain.check": {
+    "summary": "Vérifie si un nom de domaine est disponible à l'achat via Vercel.",
+    "details": "Affiche le prix estimé si disponible.",
+    "example": "iloc vercel domain check mon-nouveau-nom.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "domain": {
+        "description": "Nom de domaine à vérifier."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.domain.dns.list": {
+    "summary": "Liste les enregistrements DNS d'un domaine géré par Vercel.",
+    "details": "",
+    "example": "iloc vercel domain dns list exemple.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "domain": {
+        "description": "Domaine ciblé."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.domain.dns.add": {
+    "summary": "Ajoute un enregistrement DNS à un domaine géré par Vercel.",
+    "details": "",
+    "example": "iloc vercel domain dns add exemple.com --name www --rec-type CNAME --value cname.vercel-dns.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "domain": {
+        "description": "Domaine ciblé."
+      },
+      "name": {
+        "description": "Nom de l'enregistrement (ex: www, @ pour la racine)."
+      },
+      "rec_type": {
+        "description": "Type d'enregistrement : A, AAAA, CNAME, MX, TXT..."
+      },
+      "value": {
+        "description": "Valeur de l'enregistrement."
+      },
+      "ttl": {
+        "description": "Durée de vie en secondes."
+      },
+      "priority": {
+        "description": "Priorité (pour les enregistrements MX)."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.domain.dns.remove": {
+    "summary": "Supprime un enregistrement DNS.",
+    "details": "L'ID s'obtient via iloc vercel domain dns list.",
+    "example": "iloc vercel domain dns remove exemple.com rec_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "domain": {
+        "description": "Domaine ciblé."
+      },
+      "record_id": {
+        "description": "ID de l'enregistrement à supprimer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.alias.list": {
+    "summary": "Liste les alias (URLs personnalisées pointant vers des déploiements).",
+    "details": "",
+    "example": "iloc vercel alias list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "project": {
+        "description": "Limite aux alias de ce projet. Omis = projet lié dans le dossier courant, si disponible."
+      },
+      "limit": {
+        "description": "Nombre maximum affiché."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.alias.assign": {
+    "summary": "Assigne un alias (URL personnalisée) à un déploiement précis.",
+    "details": "",
+    "example": "iloc vercel alias assign dpl_abc123 mon-site.exemple.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "deployment_id": {
+        "description": "ID du déploiement cible."
+      },
+      "alias": {
+        "description": "URL/alias à assigner."
+      },
+      "redirect": {
+        "description": "Domaine vers lequel rediriger cet alias."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.alias.delete": {
+    "summary": "Supprime un alias.",
+    "details": "",
+    "example": "iloc vercel alias delete mon-site.exemple.com",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "alias": {
+        "description": "Alias à supprimer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.secret.list": {
+    "summary": "Liste les secrets Vercel legacy (mécanisme historique, distinct des variables d'environnement).",
+    "details": "Le code lui-même recommande de préférer iloc vercel env add pour les nouveaux secrets — ce mécanisme est maintenu pour compatibilité.",
+    "example": "iloc vercel secret list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.secret.add": {
+    "summary": "Crée un secret Vercel legacy.",
+    "details": "Mécanisme historique — préférez iloc vercel env add pour les nouveaux projets.",
+    "example": "iloc vercel secret add mon-secret",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Nom du secret."
+      },
+      "value": {
+        "description": "Valeur du secret. Omis = saisie masquée."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.secret.rename": {
+    "summary": "Renomme un secret Vercel legacy.",
+    "details": "",
+    "example": "iloc vercel secret rename ancien-nom nouveau-nom",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom actuel du secret."
+      },
+      "new_name": {
+        "description": "Nouveau nom."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.secret.delete": {
+    "summary": "Supprime un secret Vercel legacy.",
+    "details": "",
+    "example": "iloc vercel secret delete mon-secret",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "name": {
+        "description": "Nom du secret à supprimer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.edge.list": {
+    "summary": "Liste les Edge Config (stockage clé-valeur à très faible latence, lu depuis les fonctions Edge).",
+    "details": "",
+    "example": "iloc vercel edge list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.edge.create": {
+    "summary": "Crée un nouvel Edge Config.",
+    "details": "",
+    "example": "iloc vercel edge create mon-config",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "slug": {
+        "description": "Identifiant/nom du nouvel Edge Config."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.edge.items": {
+    "summary": "Liste les clés/valeurs stockées dans un Edge Config.",
+    "details": "",
+    "example": "iloc vercel edge items ecfg_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "id": {
+        "description": "ID de l'Edge Config."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.edge.update": {
+    "summary": "Ajoute, modifie, ou supprime des clés dans un Edge Config.",
+    "details": "Format des items : CLE=valeur pour créer/modifier, CLE:delete pour supprimer — combinables en plusieurs opérations dans le même appel.",
+    "example": "iloc vercel edge update ecfg_abc123 --items feature_flag=true --items old_key:delete",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "id": {
+        "description": "ID de l'Edge Config."
+      },
+      "items": {
+        "description": "Opération(s) au format CLE=valeur ou CLE:delete — répétable."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.edge.delete": {
+    "summary": "Supprime un Edge Config entier.",
+    "details": "",
+    "example": "iloc vercel edge delete ecfg_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "id": {
+        "description": "ID de l'Edge Config à supprimer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.webhook.list": {
+    "summary": "Liste les webhooks Vercel configurés au niveau du compte.",
+    "details": "",
+    "example": "iloc vercel webhook list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.webhook.create": {
+    "summary": "Crée un webhook Vercel qui notifiera une URL lors d'événements de déploiement.",
+    "details": "Événements par défaut si non précisés : deployment.created, deployment.ready, deployment.error.",
+    "example": "iloc vercel webhook create https://mon-serveur.com/hook",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "caution",
+    "args": {
+      "url": {
+        "description": "URL qui recevra les notifications."
+      },
+      "events": {
+        "description": "Événement(s) déclencheurs — répétable. Omis = les trois événements de déploiement standards."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.webhook.delete": {
+    "summary": "Supprime un webhook Vercel.",
+    "details": "",
+    "example": "iloc vercel webhook delete hook_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "destructive",
+    "args": {
+      "id": {
+        "description": "ID du webhook à supprimer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "vercel.check.list": {
+    "summary": "Liste les checks (contrôles CI/qualité) d'un déploiement.",
+    "details": "Les checks servent de portes de validation avant qu'un déploiement soit considéré prêt (ex: tests, lint, scan de sécurité orchestrés par un outil tiers via l'API Vercel).",
+    "example": "iloc vercel check list dpl_abc123",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "deployment_id": {
+        "description": "ID du déploiement."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.check.create": {
+    "summary": "Crée un nouveau check sur un déploiement.",
+    "details": "Avec --blocking, le déploiement reste en attente tant que ce check n'est pas résolu.",
+    "example": "iloc vercel check create dpl_abc123 --name \"Tests E2E\" --blocking",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "deployment_id": {
+        "description": "ID du déploiement."
+      },
+      "name": {
+        "description": "Nom du check."
+      },
+      "detached": {
+        "description": "Crée le check sans le lier automatiquement au cycle de vie du déploiement."
+      },
+      "blocking": {
+        "description": "Bloque le déploiement tant que ce check n'est pas résolu."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.check.update": {
+    "summary": "Met à jour le statut ou la conclusion d'un check existant.",
+    "details": "",
+    "example": "iloc vercel check update dpl_abc123 chk_abc123 --status completed --conclusion succeeded",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "deployment_id": {
+        "description": "ID du déploiement."
+      },
+      "check_id": {
+        "description": "ID du check à mettre à jour."
+      },
+      "status": {
+        "description": "Nouveau statut : running, completed..."
+      },
+      "conclusion": {
+        "description": "Conclusion si status=completed : succeeded, failed, canceled..."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.team.list": {
+    "summary": "Liste les teams Vercel accessibles avec votre compte, et votre rôle dans chacune.",
+    "details": "",
+    "example": "iloc vercel team list",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "vercel.team.switch": {
+    "summary": "Change la team par défaut pour le profil actif.",
+    "details": "Toutes les commandes Vercel suivantes utiliseront cette team par défaut, sans avoir à la préciser à chaque fois.",
+    "example": "iloc vercel team switch ma-boite",
+    "prerequisites": [
+      "iloc connect vercel"
+    ],
+    "danger": "safe",
+    "args": {
+      "slug": {
+        "description": "Identifiant (slug) de la team à activer."
+      },
+      "profile": {
+        "description": "Profil Vercel à utiliser."
+      }
+    }
+  },
+  "supabase.list": {
+    "summary": "Liste les comptes Supabase connectés.",
+    "details": "",
+    "example": "iloc supabase list",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "supabase.use": {
+    "summary": "Change le compte Supabase actif.",
+    "details": "",
+    "example": "iloc supabase use boulot",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom du profil à activer."
+      }
+    }
+  },
+  "supabase.status": {
+    "summary": "Affiche le compte Supabase connecté et vérifie que le token est valide.",
+    "details": "",
+    "example": "iloc supabase status",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil à vérifier."
+      }
+    }
+  },
+  "supabase.remove": {
+    "summary": "Déconnecte un compte Supabase d'ilocker.",
+    "details": "Ne révoque pas le token côté Supabase — seulement la connexion locale à ilocker.",
+    "example": "iloc supabase remove boulot",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Nom du profil à déconnecter."
+      }
+    }
+  },
+  "supabase.org.list": {
+    "summary": "Liste les organisations Supabase accessibles avec votre compte.",
+    "details": "",
+    "example": "iloc supabase org list",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.project.create": {
+    "summary": "Crée un nouveau projet Supabase (base de données PostgreSQL + services associés).",
+    "details": "Génère un mot de passe de base de données aléatoire sécurisé si --db-pass est omis — affiché une seule fois à la création, non récupérable ensuite : à conserver immédiatement en lieu sûr. La création prend généralement 1 à 2 minutes avant que le projet devienne actif. Un projet Supabase peut avoir un coût selon le plan de l'organisation — un avertissement est affiché avant confirmation.",
+    "example": "iloc supabase project create mon-app --region eu-west-1 --link",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Nom du projet. Omis = nom du dossier courant."
+      },
+      "org": {
+        "description": "Organisation propriétaire. Omis = organisation par défaut du profil, ou choix interactif s'il y en a plusieurs."
+      },
+      "region": {
+        "description": "Région d'hébergement (ex: eu-west-1, us-east-1). Omis = eu-west-1."
+      },
+      "db_pass": {
+        "description": "Mot de passe de la base de données. Omis = généré automatiquement et affiché une seule fois."
+      },
+      "link": {
+        "description": "Crée .supabase/project.json dans le dossier courant après création."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore les confirmations."
+      }
+    }
+  },
+  "supabase.project.list": {
+    "summary": "Liste vos projets Supabase.",
+    "details": "",
+    "example": "iloc supabase project list",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.project.view": {
+    "summary": "Affiche le détail d'un projet : statut, région, URL, date de création.",
+    "details": "",
+    "example": "iloc supabase project view",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.project.delete": {
+    "summary": "Supprime définitivement un projet Supabase — action irréversible.",
+    "details": "Double confirmation : il faut d'abord taper exactement la référence du projet pour prouver l'intention, puis confirmer une seconde fois (sauf --yes). Toutes les données (base de données, storage, fonctions) sont perdues sans recours.",
+    "example": "iloc supabase project delete abcdefghijklm",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "destructive",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet à supprimer. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la seconde confirmation (la saisie de la référence exacte reste requise)."
+      }
+    }
+  },
+  "supabase.project.pause": {
+    "summary": "Met en pause un projet Supabase (arrête la facturation compute, la base de données reste intacte).",
+    "details": "",
+    "example": "iloc supabase project pause",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.project.restore": {
+    "summary": "Sort un projet Supabase de pause.",
+    "details": "",
+    "example": "iloc supabase project restore",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.project.url": {
+    "summary": "Affiche l'URL du dashboard web d'un projet.",
+    "details": "",
+    "example": "iloc supabase project url",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.keys": {
+    "summary": "Affiche les clés API d'un projet (anon, service_role).",
+    "details": "Masquées par défaut (12 premiers caractères visibles seulement) — ajoutez --reveal pour les afficher en clair. La clé service_role contourne les Row Level Security (RLS), à garder strictement côté serveur, jamais exposée côté client.",
+    "example": "iloc supabase keys --reveal",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "reveal": {
+        "description": "Affiche les clés en clair au lieu de les masquer."
+      }
+    }
+  },
+  "supabase.sql": {
+    "summary": "Exécute une requête SQL directement sur la base de données du projet.",
+    "details": "Détecte automatiquement les requêtes qui modifient ou suppriment des données (DROP, DELETE, TRUNCATE, ALTER, UPDATE) et demande une confirmation supplémentaire avant exécution dans ce cas.",
+    "example": "iloc supabase sql \"SELECT count(*) FROM users\"",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "query": {
+        "description": "Requête SQL à exécuter."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation supplémentaire pour les requêtes mutantes."
+      }
+    }
+  },
+  "supabase.table.list": {
+    "summary": "Liste les tables d'un schéma, avec le nombre de lignes et l'état de la sécurité au niveau ligne (RLS).",
+    "details": "",
+    "example": "iloc supabase table list --schema public",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "schema": {
+        "description": "Schéma PostgreSQL à inspecter (défaut : public)."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.extension.list": {
+    "summary": "Liste les extensions PostgreSQL disponibles et installées sur le projet.",
+    "details": "",
+    "example": "iloc supabase extension list --installed-only",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "installed_only": {
+        "description": "N'affiche que les extensions déjà installées."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.migration.list": {
+    "summary": "Liste les migrations déjà appliquées sur le projet distant.",
+    "details": "",
+    "example": "iloc supabase migration list",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.migration.status": {
+    "summary": "Compare les migrations locales (dossier ./supabase/migrations par défaut) à celles déjà appliquées sur le serveur.",
+    "details": "Affiche chaque migration locale avec son statut (appliquée ou en attente), sans rien modifier sur le serveur.",
+    "example": "iloc supabase migration status",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "dir": {
+        "description": "Dossier des fichiers de migration .sql (défaut : ./supabase/migrations)."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.migration.push": {
+    "summary": "Applique les migrations locales absentes du serveur — idempotent par construction.",
+    "details": "Ne réapplique jamais une migration déjà passée, même relancé plusieurs fois : seules les migrations réellement en attente sont exécutées. En cas d'erreur sur une migration, l'exécution s'arrête immédiatement — les migrations déjà appliquées avant l'échec ne sont pas rejouées, il suffit de corriger le fichier fautif puis relancer.",
+    "example": "iloc supabase migration push",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "dir": {
+        "description": "Dossier des fichiers de migration .sql (défaut : ./supabase/migrations)."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.function.list": {
+    "summary": "Liste les Edge Functions déployées sur un projet.",
+    "details": "",
+    "example": "iloc supabase function list",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.function.view": {
+    "summary": "Affiche le détail d'une Edge Function : version, statut, vérification JWT, URL d'appel.",
+    "details": "",
+    "example": "iloc supabase function view mon-endpoint",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "slug": {
+        "description": "Identifiant de la fonction."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.function.deploy": {
+    "summary": "Déploie (ou met à jour) une Edge Function à partir d'un fichier source local.",
+    "details": "Chaque déploiement incrémente la version de la fonction.",
+    "example": "iloc supabase function deploy mon-endpoint ./functions/index.ts",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "slug": {
+        "description": "Identifiant de la fonction."
+      },
+      "file": {
+        "description": "Chemin du fichier source local à déployer."
+      },
+      "no_verify_jwt": {
+        "description": "Désactive la vérification JWT sur cette fonction (la rend accessible sans authentification)."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.function.delete": {
+    "summary": "Supprime une Edge Function.",
+    "details": "",
+    "example": "iloc supabase function delete mon-endpoint",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "destructive",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "slug": {
+        "description": "Identifiant de la fonction à supprimer."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.secret.list": {
+    "summary": "Liste les noms des secrets configurés pour les Edge Functions d'un projet.",
+    "details": "Supabase ne renvoie jamais les valeurs des secrets par API, uniquement leurs noms.",
+    "example": "iloc supabase secret list",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.secret.set": {
+    "summary": "Crée ou met à jour un secret accessible depuis les Edge Functions.",
+    "details": "Saisie masquée si --value est omis.",
+    "example": "iloc supabase secret set STRIPE_KEY",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "key": {
+        "description": "Nom du secret."
+      },
+      "value": {
+        "description": "Valeur du secret. Omis = saisie masquée."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.secret.delete": {
+    "summary": "Supprime un secret.",
+    "details": "",
+    "example": "iloc supabase secret delete STRIPE_KEY",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "destructive",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "key": {
+        "description": "Nom du secret à supprimer."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.branch.list": {
+    "summary": "Liste les branches (environnements de preview isolés, chacun avec sa propre base de données) d'un projet.",
+    "details": "",
+    "example": "iloc supabase branch list",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.branch.create": {
+    "summary": "Crée une nouvelle branche de preview.",
+    "details": "Chaque branche a sa propre base de données isolée, initialisée à partir de la production.",
+    "example": "iloc supabase branch create feature-auth",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "name": {
+        "description": "Nom de la nouvelle branche."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.branch.delete": {
+    "summary": "Supprime une branche de preview et sa base de données associée.",
+    "details": "",
+    "example": "iloc supabase branch delete br_abc123",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "destructive",
+    "args": {
+      "branch_id": {
+        "description": "ID de la branche à supprimer."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.branch.merge": {
+    "summary": "Merge les changements d'une branche de preview vers la production.",
+    "details": "",
+    "example": "iloc supabase branch merge br_abc123",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "branch_id": {
+        "description": "ID de la branche à merger."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.branch.reset": {
+    "summary": "Réinitialise une branche de preview, en perdant les changements non trackés dans des migrations.",
+    "details": "",
+    "example": "iloc supabase branch reset br_abc123",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "destructive",
+    "args": {
+      "branch_id": {
+        "description": "ID de la branche à réinitialiser."
+      },
+      "migration_version": {
+        "description": "Réinitialise jusqu'à cette version de migration précise. Omis = réinitialisation complète."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.branch.rebase": {
+    "summary": "Rebase une branche de preview sur l'état actuel de la production.",
+    "details": "",
+    "example": "iloc supabase branch rebase br_abc123",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "caution",
+    "args": {
+      "branch_id": {
+        "description": "ID de la branche à rebaser."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "supabase.advisor.security": {
+    "summary": "Lance une analyse de sécurité automatique du projet (RLS manquantes, politiques trop permissives, etc.).",
+    "details": "Chaque problème détecté inclut une recommandation de correction concrète.",
+    "example": "iloc supabase advisor security",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "supabase.advisor.performance": {
+    "summary": "Lance une analyse de performance automatique (index manquants, requêtes lentes détectées, etc.).",
+    "details": "Chaque problème détecté inclut une recommandation de correction concrète.",
+    "example": "iloc supabase advisor performance",
+    "prerequisites": [
+      "iloc connect supabase"
+    ],
+    "danger": "safe",
+    "args": {
+      "project_ref": {
+        "description": "Référence du projet. Omis = projet lié dans le dossier courant."
+      },
+      "profile": {
+        "description": "Profil Supabase à utiliser."
+      }
+    }
+  },
+  "hyperscale.push": {
+    "summary": "Distribue le dernier snapshot sur plusieurs clouds simultanément, avec tolérance de panne (Reed-Solomon).",
+    "details": "Chaque fichier est découpé en shards de données ET de parité (schéma k/m défini par iloc hyperscale config), répartis sur tous les profils cloud configurés. Aucun cloud pris isolément ne détient assez de shards pour reconstituer les données seul. Avec un seul cloud configuré, le schéma défini dans la config est utilisé tel quel plutôt que le calcul automatique multi-cloud.",
+    "example": "iloc hyperscale push",
+    "prerequisites": [
+      "iloc init",
+      "iloc save",
+      "iloc hyperscale config init",
+      "iloc config cloud add (au moins un profil)"
+    ],
+    "danger": "safe",
+    "args": {
+      "path": {
+        "description": "Limite l'upload à ce sous-dossier du projet."
+      },
+      "file": {
+        "description": "Limite l'upload à ce ou ces fichier(s) précis — répétable, combinable avec --path."
+      }
+    }
+  },
+  "hyperscale.clone": {
+    "summary": "Reconstitue un snapshot distribué via Hyperscale, en récupérant les shards depuis les clouds configurés.",
+    "details": "Accepte les URLs au format hyperscale://<id> ou iloc+hs://<id>. Le manifest du snapshot est cherché sur tous les clouds configurés jusqu'à en trouver une copie (redondance intentionnelle). Grâce à l'erasure coding, la reconstruction réussit même si certains clouds sont temporairement indisponibles, tant qu'il reste au moins k shards accessibles sur m+k au total.",
+    "example": "iloc hyperscale clone hyperscale://a1b2c3d4...",
+    "prerequisites": [
+      "iloc config cloud add (profils utilisés lors du push original)"
+    ],
+    "danger": "safe",
+    "args": {
+      "dest": {
+        "description": "Dossier de destination. Omis = iloc-hs-<8 premiers caractères de l'id> dans le dossier courant."
+      },
+      "url": {
+        "description": "URL du snapshot au format hyperscale:// ou iloc+hs://."
+      }
+    }
+  },
+  "hyperscale.export": {
+    "summary": "Exporte un sous-module précis du projet vers Hyperscale, avec une clé de ciblage optionnelle.",
+    "details": "Techniquement un raccourci vers hyperscale push limité au chemin précisé.",
+    "example": "iloc hyperscale export packages/api",
+    "prerequisites": [
+      "iloc hyperscale config init",
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "target": {
+        "description": "Clé de ciblage libre associée à cet export (usage informatif)."
+      },
+      "path": {
+        "description": "Chemin du module/sous-dossier à exporter."
+      }
+    }
+  },
+  "hyperscale.status": {
+    "summary": "Affiche l'état complet de la configuration Hyperscale du projet : organisation, schéma erasure coding, clouds connectés, nœud local.",
+    "details": "Valide aussi la configuration et signale les problèmes détectés (ex: schéma incompatible avec le nombre de clouds réellement configurés).",
+    "example": "iloc hyperscale status",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "hyperscale.config.show": {
+    "summary": "Affiche la configuration Hyperscale actuelle et suggère des paramètres k/m adaptés au nombre de clouds connectés.",
+    "details": "",
+    "example": "iloc hyperscale config show",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "hyperscale.config.init": {
+    "summary": "Initialise la configuration Hyperscale pour le projet courant.",
+    "details": "Calcule automatiquement un schéma k/m adapté si des profils cloud sont déjà configurés (sinon k=6, m=3 par défaut). Réutilise la clé du projet ilocker comme identifiant d'organisation si --org n'est pas précisé.",
+    "example": "iloc hyperscale config init",
+    "prerequisites": [
+      "iloc init"
+    ],
+    "danger": "safe",
+    "args": {
+      "org": {
+        "description": "Identifiant d'organisation Hyperscale. Omis = clé du projet ilocker, ou UUID généré."
+      }
+    }
+  },
+  "hyperscale.config.validate": {
+    "summary": "Vérifie que la configuration Hyperscale actuelle est cohérente et exploitable.",
+    "details": "",
+    "example": "iloc hyperscale config validate",
+    "prerequisites": [
+      "iloc hyperscale config init"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "hyperscale.node.start": {
+    "summary": "Démarre ce nœud comme contributeur du réseau de stockage Hyperscale (partage de l'espace disque alloué).",
+    "details": "Reste actif tant que la commande tourne (processus au premier plan).",
+    "example": "iloc hyperscale node start",
+    "prerequisites": [
+      "iloc hyperscale config init"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "hyperscale.node.stop": {
+    "summary": "Arrête le nœud de stockage local, y compris depuis un autre terminal que celui qui l'a démarré.",
+    "details": "Le nœud publie son PID dans un fichier au démarrage (iloc hyperscale node start) ; cette commande le lit, vérifie que le process est bien vivant, puis lui envoie un signal d'arrêt. Sur Unix, le nœud intercepte ce signal et nettoie son fichier PID immédiatement avant de quitter.",
+    "example": "iloc hyperscale node stop",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "hyperscale.node.status": {
+    "summary": "Affiche si un nœud de stockage Hyperscale est réellement actif, y compris depuis un autre terminal que celui qui l'a démarré.",
+    "details": "Vérifie l'état réel du process via le fichier PID publié par iloc hyperscale node start — pas une valeur statique.",
+    "example": "iloc hyperscale node status",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "share": {
+    "summary": "Partage le dernier snapshot directement avec un pair, en P2P ou via un lien cloud chiffré.",
+    "details": "Deux modes selon --cloud : sans ce flag, ouvre une connexion TCP directe (ou via un relay NAT traversal si --relay est précisé) et attend qu'un pair se connecte avec `iloc clone` — chiffrement AES-GCM, transfert reprenable en cas de coupure. Avec --cloud, génère un lien asynchrone (pas besoin que les deux personnes soient en ligne en même temps) via des URLs S3 pré-signées — non supporté pour Azure (utilisez ce mode uniquement avec un profil S3-compatible).",
+    "example": "iloc share --relay relay.ilocker.dev",
+    "prerequisites": [
+      "iloc init",
+      "iloc save"
+    ],
+    "danger": "safe",
+    "args": {
+      "port": {
+        "description": "Port TCP d'écoute pour le mode direct (défaut : port standard ilocker)."
+      },
+      "relay": {
+        "description": "Adresse d'un serveur relay pour la traversée NAT, si une connexion directe n'est pas possible."
+      },
+      "cloud": {
+        "description": "Bascule vers le mode lien cloud asynchrone plutôt qu'une connexion P2P directe."
+      },
+      "ttl": {
+        "description": "Durée de validité du lien en heures, avec --cloud uniquement (défaut : 2h, max : 168h/7 jours)."
+      },
+      "file": {
+        "description": "Limite le partage à ce ou ces fichier(s) précis — répétable. Omis = tout le dernier snapshot."
+      },
+      "profile": {
+        "description": "Profil cloud à utiliser, avec --cloud uniquement."
+      }
+    }
+  },
+  "clone": {
+    "summary": "Clone un projet ilocker partagé — détecte automatiquement s'il s'agit d'un lien cloud ou d'une clé P2P classique.",
+    "details": "Si le destinataire existe déjà et contient des données, bascule en mode mise à jour reprenable plutôt que de tout retélécharger. Après reconstruction complète des fichiers, tente une auto-réhydratation selon le type de projet détecté (npm install pour Node.js, python -m venv pour Python, cargo build pour Rust, go mod download pour Go) — best-effort, un échec n'empêche pas le clone de réussir.",
+    "example": "iloc clone iloc://a1b2c3... --host 192.168.1.42",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "key": {
+        "description": "Clé du projet (iloc://...) ou lien cloud partagé."
+      },
+      "key_secret": {
+        "description": "Clé de déchiffrement séparée, obligatoire uniquement pour les liens cloud (modèle deux canaux)."
+      },
+      "host": {
+        "description": "Adresse IP du pair pour une connexion P2P directe."
+      },
+      "relay": {
+        "description": "Adresse d'un serveur relay, si --host n'est pas utilisable (NAT)."
+      },
+      "port": {
+        "description": "Port TCP du pair en mode direct."
+      },
+      "dest": {
+        "description": "Dossier de destination. Omis = iloc-<8 premiers caractères de l'id> dans le dossier courant."
+      }
+    }
+  },
+  "transfer-status": {
+    "summary": "Affiche l'état d'un transfert P2P (share/clone) en cours ou interrompu.",
+    "details": "Utile pour voir la progression avant de relancer une commande interrompue — le transfert reprend automatiquement là où il s'était arrêté.",
+    "example": "iloc transfer-status",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "deploy": {
+    "summary": "Orchestrateur intelligent : détecte, lie, ou crée automatiquement GitHub, Vercel et Supabase pour le projet courant, sans jamais dupliquer une ressource existante.",
+    "details": "Fonctionne en deux phases strictement séparées : un plan en lecture seule (jamais de mutation) est d'abord construit puis affiché, avant toute action réelle. Pour chaque provider, la résolution se fait dans cet ordre : état ilocker déjà connu (.ilocker/deploy.toml) → liaison locale native (.git/.vercel/.supabase) → recherche par nom sur le compte connecté → sinon création. Pour Supabase spécifiquement, si plusieurs projets partagent le même nom (contrairement à GitHub/Vercel, Supabase ne garantit pas l'unicité), la commande refuse de deviner et s'arrête pour vous laisser préciser. Applique aussi les migrations Supabase en attente et synchronise les variables d'environnement (.env local) vers Vercel — jamais les valeurs ne sont affichées, seul un hash sert à détecter un changement. Un seul point du code lit une confirmation utilisateur, structurellement, pour ne jamais oublier un prompt sur un provider donné.",
+    "example": "iloc deploy",
+    "prerequisites": [
+      "iloc connect github / vercel / supabase (au moins un)"
+    ],
+    "danger": "caution",
+    "args": {
+      "yes": {
+        "description": "Ignore toutes les confirmations interactives."
+      },
+      "force_new": {
+        "description": "Force la création de nouvelles ressources plutôt que d'adopter une ressource existante trouvée par nom."
+      },
+      "dry_run": {
+        "description": "Affiche le plan complet sans exécuter la moindre action (s'arrête après la phase de lecture seule)."
+      },
+      "skip_github": {
+        "description": "Ignore complètement GitHub dans cette exécution."
+      },
+      "skip_vercel": {
+        "description": "Ignore complètement Vercel dans cette exécution."
+      },
+      "skip_supabase": {
+        "description": "Ignore complètement Supabase dans cette exécution."
+      },
+      "github_profile": {
+        "description": "Profil GitHub à utiliser. Omis = profil actif."
+      },
+      "vercel_profile": {
+        "description": "Profil Vercel à utiliser. Omis = profil actif."
+      },
+      "supabase_profile": {
+        "description": "Profil Supabase à utiliser. Omis = profil actif."
+      },
+      "org": {
+        "description": "Organisation à utiliser pour la création (GitHub et/ou Supabase selon le contexte)."
+      },
+      "team": {
+        "description": "Team Vercel à associer au projet créé/adopté."
+      }
+    }
+  },
+  "node.join": {
+    "summary": "Rejoint le réseau de pairs ilocker en tant que nœud STUN volontaire (aide les autres à se connecter en P2P direct).",
+    "details": "Partage uniquement votre IP:port publique (déjà visible publiquement) pour aider d'autres utilisateurs à établir des connexions directes — aucune donnée ne transite jamais par votre machine (ce n'est pas un relais TURN, seulement de la découverte d'adresse STUN). Entièrement opt-in, désactivable à tout moment.",
+    "example": "iloc node join",
+    "prerequisites": [
+      "iloc login"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "node.leave": {
+    "summary": "Quitte le réseau de pairs — exerce le droit RGPD à l'effacement (votre jeton de nœud est supprimé du serveur).",
+    "example": "iloc node leave",
+    "prerequisites": [
+      "iloc node join"
+    ],
+    "details": "",
+    "danger": "safe",
+    "args": {}
+  },
+  "node.start": {
+    "summary": "Démarre le nœud STUN local (nécessite d'avoir rejoint le réseau au préalable).",
+    "details": "Process bloquant au premier plan tant que la commande tourne — Ctrl+C pour arrêter.",
+    "example": "iloc node start",
+    "prerequisites": [
+      "iloc node join"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "node.status": {
+    "summary": "Affiche si vous participez au réseau de pairs et la configuration actuelle (port, bande passante allouée).",
+    "details": "",
+    "example": "iloc node status",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "login": {
+    "summary": "Connecte votre compte ilocker Cloud (optionnel — pour le réseau de pairs et les futures fonctionnalités liées au compte).",
+    "details": "Le serveur par défaut est celui d'ilocker (surchargeable via la variable d'environnement ILOC_SERVER). Le plan est toujours gratuit — aucune fonctionnalité core d'ilocker (snapshots, cloud BYOC, P2P, providers de déploiement) ne nécessite ce compte.",
+    "example": "iloc login",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "logout": {
+    "summary": "Déconnecte votre compte ilocker Cloud.",
+    "details": "Supprime les credentials locaux même si la révocation côté serveur échoue (ex: serveur injoignable) — vous êtes toujours déconnecté localement dans tous les cas.",
+    "example": "iloc logout",
+    "prerequisites": [
+      "iloc login"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "whoami": {
+    "summary": "Affiche le compte ilocker Cloud actuellement connecté.",
+    "details": "Affiche d'abord immédiatement les informations en cache local, puis tente une actualisation réseau en arrière-plan — si le serveur est injoignable, les informations locales restent affichées sans erreur bloquante.",
+    "example": "iloc whoami",
+    "prerequisites": [
+      "iloc login"
+    ],
+    "danger": "safe",
+    "args": {}
+  },
+  "push": {
+    "summary": "Sauvegarde le dernier snapshot vers votre cloud personnel (Cloud BYOC), chiffré et dédupliqué.",
+    "details": "Chaque chunk est chiffré (ChaCha20-Poly1305) avant de quitter la machine — le bucket ne contient jamais que du contenu chiffré. Upload parallèle (8 workers) et déduplication : un chunk déjà présent sur le cloud n'est jamais renvoyé.",
+    "example": "iloc push",
+    "prerequisites": [
+      "iloc init",
+      "iloc save",
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "file": {
+        "description": "Limite l'envoi à ce ou ces fichier(s) précis — répétable. Omis = tout le dernier snapshot."
+      },
+      "profile": {
+        "description": "Profil cloud à utiliser. Omis = profil actif."
+      }
+    }
+  },
+  "pull": {
+    "summary": "Restaure des fichiers depuis votre cloud personnel.",
+    "details": "Toujours additif — n'écrase et ne supprime jamais un fichier local sans confirmation explicite, contrairement à undo qui peut restaurer tout le projet.",
+    "example": "iloc pull --file src/app.rs",
+    "prerequisites": [
+      "iloc push (au préalable, depuis cette machine ou une autre)"
+    ],
+    "danger": "safe",
+    "args": {
+      "id": {
+        "description": "Numéro du snapshot à restaurer. Omis = dernier snapshot disponible sur le cloud."
+      },
+      "file": {
+        "description": "Limite la restauration à ce ou ces fichier(s) précis — répétable. Omis = tout le snapshot."
+      },
+      "dest": {
+        "description": "Dossier de destination. Omis = dossier courant."
+      },
+      "profile": {
+        "description": "Profil cloud à utiliser."
+      }
+    }
+  },
+  "cloud.usage": {
+    "summary": "Affiche l'espace utilisé sur votre cloud personnel (chunks + manifests).",
+    "details": "",
+    "example": "iloc cloud usage",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil cloud à utiliser."
+      }
+    }
+  },
+  "cloud.doctor": {
+    "summary": "Teste la connectivité réelle avec votre cloud personnel : écriture, lecture, puis suppression d'un fichier de test.",
+    "details": "Va au-delà d'une simple vérification de credentials — confirme que les trois opérations de base (PUT/GET/DELETE) fonctionnent réellement avec les permissions actuelles du bucket.",
+    "example": "iloc cloud doctor",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil cloud à tester."
+      }
+    }
+  },
+  "cloud.gc": {
+    "summary": "Nettoie les chunks orphelins et les liens de partage expirés sur votre cloud personnel.",
+    "details": "Un chunk est orphelin s'il n'est référencé par aucun manifest de snapshot encore valide. Si le bucket est partagé entre plusieurs machines ou personnes, assurez-vous que toutes les autres ont bien synchronisé avant de lancer un nettoyage, pour ne pas supprimer un chunk qu'une autre machine s'apprêtait à utiliser.",
+    "example": "iloc cloud gc",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "destructive",
+    "args": {
+      "profile": {
+        "description": "Profil cloud à nettoyer."
+      },
+      "yes": {
+        "description": "Ignore la confirmation."
+      }
+    }
+  },
+  "cloud.verify": {
+    "summary": "Vérifie l'intégrité de tous les snapshots présents sur votre cloud personnel (recalcul SHA-256).",
+    "details": "",
+    "example": "iloc cloud verify",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "profile": {
+        "description": "Profil cloud à vérifier."
+      }
+    }
+  },
+  "config.cloud.add": {
+    "summary": "Configure un nouveau profil cloud personnel (assistant interactif).",
+    "details": "Teste réellement la connectivité (écriture + lecture + suppression) avant de sauvegarder le profil — un profil mal configuré n'est jamais enregistré silencieusement. Les credentials passent par le trousseau système, ou le fichier chiffré de repli si indisponible.",
+    "example": "iloc config cloud add --name perso",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom à donner à ce profil."
+      },
+      "activate": {
+        "description": "Active ce profil comme profil par défaut immédiatement après création."
+      }
+    }
+  },
+  "config.cloud.list": {
+    "summary": "Liste vos profils cloud personnels configurés.",
+    "details": "",
+    "example": "iloc config cloud list",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "config.cloud.use": {
+    "summary": "Change le profil cloud personnel actif par défaut.",
+    "details": "",
+    "example": "iloc config cloud use perso",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "safe",
+    "args": {
+      "name": {
+        "description": "Nom du profil à activer."
+      }
+    }
+  },
+  "config.cloud.remove": {
+    "summary": "Supprime un profil cloud personnel configuré.",
+    "details": "Ne supprime rien sur le cloud lui-même — seulement la configuration locale de connexion.",
+    "example": "iloc config cloud remove perso",
+    "prerequisites": [
+      "iloc config cloud add"
+    ],
+    "danger": "caution",
+    "args": {
+      "name": {
+        "description": "Nom du profil à supprimer."
+      }
+    }
+  },
+  "selfinstall": {
+    "summary": "Installe le binaire courant dans le PATH du système.",
+    "details": "Choisit /usr/local/bin si accessible en écriture, sinon ~/.local/bin (Linux/macOS) ou %LOCALAPPDATA%\\ilocker\\bin (Windows), et configure le PATH dans le fichier de démarrage du shell détecté.",
+    "example": "iloc selfinstall",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "dir": {
+        "description": "Dossier d'installation personnalisé, plutôt que la détection automatique."
+      },
+      "check": {
+        "description": "Vérifie seulement si iloc est déjà dans le PATH, sans rien installer."
+      }
+    }
+  },
+  "update": {
+    "summary": "Vérifie et installe la dernière version d'ilocker depuis GitHub Releases.",
+    "details": "Le nouveau binaire est vérifié par SHA-256 avant d'être installé, puis remplace l'ancien de façon atomique (aucune fenêtre où la commande iloc serait cassée ou absente pendant la mise à jour).",
+    "example": "iloc update",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "check": {
+        "description": "Vérifie seulement si une nouvelle version existe, sans l'installer."
+      }
+    }
+  },
+  "completion": {
+    "summary": "Génère un script de complétion shell (Tab pour compléter les commandes et options).",
+    "details": "Bash et Zsh uniquement pour l'instant. Avec --setup, affiche les instructions d'installation au lieu du script brut.",
+    "example": "iloc completion zsh --setup",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "shell": {
+        "description": "bash ou zsh."
+      },
+      "setup": {
+        "description": "Affiche les instructions d'installation au lieu du script brut."
+      }
+    }
+  },
+  "provider.init": {
+    "summary": "Crée un nouveau manifeste de provider tiers (fichier TOML commenté prêt à éditer).",
+    "details": "Point de départ pour développer une intégration tierce (Linear, Stripe, GitLab, un outil interne d'entreprise…) sans toucher au code d'ilocker. Génère <slug>.provider.toml dans le dossier courant avec un exemple complet et commenté : identité, schéma d'authentification, et quatre opérations types (liste, vue, création, suppression) illustrant chaque emplacement d'argument (path/query/body) et chaque niveau de danger. Refuse un slug déjà réservé par une commande native d'ilocker ou un fichier de sortie déjà existant.",
+    "example": "iloc provider init linear",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "slug": {
+        "description": "Identifiant unique du provider : minuscules, chiffres et tirets uniquement (devient le nom de la commande, ex: iloc linear ...)."
+      }
+    }
+  },
+  "provider.validate": {
+    "summary": "Valide un manifeste de provider : schéma et garde-fous de sécurité.",
+    "details": "Vérifie la structure TOML, le format du slug, la cohérence de l'authentification déclarée, que l'URL de base est en HTTPS (exception étroite pour http://127.0.0.1 et http://localhost, réservée au développement local), qu'aucun endpoint ne pointe hors du host déclaré, et qu'aucun chemin de commande n'est ambigu. Indique aussi si le manifeste est prêt pour la publication publique (règles plus strictes : HTTPS pur, description et exemples obligatoires) ou reste utilisable en privé uniquement.",
+    "example": "iloc provider validate linear.provider.toml",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "path": {
+        "description": "Chemin du fichier manifeste TOML à valider."
+      }
+    }
+  },
+  "provider.test": {
+    "summary": "Teste un manifeste de provider avec de vrais appels API, sans jamais stocker les identifiants.",
+    "details": "Liste les opérations déclarées dans le manifeste, demande d'en choisir une, puis saisit interactivement les identifiants et les arguments nécessaires (saisie masquée pour les champs marqués secret). Exécute la requête HTTP réelle et affiche la réponse JSON complète, pour vérifier que le manifeste fonctionne avant de l'installer. Les identifiants saisis ne sont conservés qu'en mémoire pour cette exécution et ne sont jamais écrits sur disque ni transmis à ilocker.",
+    "example": "iloc provider test linear.provider.toml",
+    "prerequisites": [],
+    "danger": "caution",
+    "args": {
+      "path": {
+        "description": "Chemin du fichier manifeste TOML à tester."
+      }
+    }
+  },
+  "provider.install": {
+    "summary": "Installe localement un manifeste de provider depuis un fichier.",
+    "details": "Valide puis copie le manifeste vers ~/.config/ilocker/providers/<slug>/manifest.toml. Une fois installé, le provider devient une commande de premier niveau (iloc <slug> ...) sans qu'ilocker ait été recompilé. L'installation depuis un registre public partagé n'est pas encore disponible à ce jour — seule l'installation depuis un fichier local l'est.",
+    "example": "iloc provider install --file linear.provider.toml",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "file": {
+        "description": "Chemin du manifeste TOML validé à installer."
+      }
+    }
+  },
+  "provider.list": {
+    "summary": "Liste les providers tiers installés localement.",
+    "details": "Affiche, pour chaque provider installé, son nom, son nombre d'opérations disponibles, et le nombre de profils (comptes) déjà connectés.",
+    "example": "iloc provider list",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {}
+  },
+  "provider.remove": {
+    "summary": "Désinstalle un provider tiers : supprime son manifeste et purge tous ses identifiants stockés.",
+    "details": "Supprime le manifeste installé ainsi que TOUS les profils connectés pour ce provider, y compris leurs identifiants dans le trousseau système ou le coffre chiffré de repli. Action irréversible — demande confirmation sauf si --yes est passé.",
+    "example": "iloc provider remove linear",
+    "prerequisites": [],
+    "danger": "destructive",
+    "args": {
+      "slug": {
+        "description": "Identifiant du provider à désinstaller."
+      },
+      "yes": {
+        "description": "Confirme automatiquement sans demander, pour les scripts et l'automatisation."
+      }
+    }
+  },
+  "provider.profile.list": {
+    "summary": "Liste les profils (comptes) connectés pour un provider tiers.",
+    "details": "Affiche chaque profil avec son libellé d'identité (ex : l'email retourné par le service lors de la connexion) et indique lequel est actuellement actif.",
+    "example": "iloc provider profile list linear",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "slug": {
+        "description": "Identifiant du provider dont les profils doivent être listés."
+      }
+    }
+  },
+  "provider.profile.use": {
+    "summary": "Change le profil actif utilisé par défaut pour un provider tiers.",
+    "details": "N'affecte que quel profil est utilisé par défaut lors des prochaines commandes (iloc <slug> ...) — entièrement réversible, ne supprime ni ne modifie aucun identifiant.",
+    "example": "iloc provider profile use linear perso",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "slug": {
+        "description": "Identifiant du provider concerné."
+      },
+      "name": {
+        "description": "Nom du profil à activer."
+      }
+    }
+  },
+  "provider.profile.remove": {
+    "summary": "Supprime un profil précis d'un provider tiers, sans affecter ses autres profils.",
+    "details": "Purge les identifiants stockés (trousseau système ou coffre chiffré de repli) pour ce seul profil. Les autres profils du même provider restent intacts. Action irréversible — demande confirmation sauf si --yes est passé.",
+    "example": "iloc provider profile remove linear perso",
+    "prerequisites": [],
+    "danger": "destructive",
+    "args": {
+      "slug": {
+        "description": "Identifiant du provider concerné."
+      },
+      "name": {
+        "description": "Nom du profil à supprimer."
+      },
+      "yes": {
+        "description": "Confirme automatiquement sans demander, pour les scripts et l'automatisation."
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# Rust
+/ilocker/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# VS Code extension (Node.js)
+ilocker-studio-vscode/node_modules/
+ilocker-studio-vscode/out/
+ilocker-studio-vscode/*.vsix
+
+# Éditeurs / OS
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# ilocker lui-même (ne jamais committer le coffre-fort d'un projet de test)
+.ilocker/

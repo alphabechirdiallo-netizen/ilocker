@@ -1,0 +1,44 @@
+{
+  "name": "ilocker-studio",
+  "displayName": "ilocker Studio",
+  "description": "Centre de commandes visuel pour ilocker — parcourez, cherchez et lancez les 202 commandes sans jamais mémoriser la syntaxe.",
+  "version": "0.1.0",
+  "publisher": "ilocker",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "SCM Providers"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "ilockerStudio.openCommandCenter", "title": "ilocker: Ouvrir le centre de commandes", "icon": "$(rocket)" },
+      { "command": "ilockerStudio.refresh", "title": "ilocker: Rafraîchir", "icon": "$(refresh)" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "ilockerStudio", "title": "ilocker", "icon": "media/icon-activitybar.svg" }
+      ]
+    },
+    "views": {
+      "ilockerStudio": [
+        { "type": "webview", "id": "ilockerStudio.sidebar", "name": "ilocker" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "ilockerStudio.openCommandCenter", "when": "view == ilockerStudio.sidebar", "group": "navigation" },
+        { "command": "ilockerStudio.refresh", "when": "view == ilockerStudio.sidebar", "group": "navigation" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --allow-missing-repository --no-yarn"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3",
+    "@vscode/vsce": "^2.24.0"
+  }
+}
