@@ -123,6 +123,7 @@ jobs:
       # les 4 autres cibles utilisent `cargo build` natif, inchangé, déjà
       # validé sur le premier run CI.
       - name: Build release binary
+        shell: bash
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
         run: |
