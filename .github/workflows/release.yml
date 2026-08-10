@@ -417,6 +417,7 @@ jobs:
     needs: release
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
@@ -427,7 +428,18 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           TAG="${{ github.ref_name }}"
-          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          # uname -s donne "Linux"/"Darwin", mais les assets sont nommés
+          # iloc-linux-*/iloc-macos-* (convention du projet, pas le nom
+          # système) — "linux" correspond par coïncidence, "darwin" ne
+          # correspond jamais à "macos". D'où l'échec systématique du
+          # smoke-test macOS, invisible jusqu'ici car aucun run n'avait
+          # atteint cette étape avant (les builds échouaient plus tôt).
+          UNAME_S=$(uname -s)
+          case "$UNAME_S" in
+            Linux)  OS="linux" ;;
+            Darwin) OS="macos" ;;
+            *) echo "OS non reconnu par ce smoke-test : $UNAME_S"; exit 1 ;;
+          esac
           ARCH=$(uname -m | sed 's/arm64/aarch64/')
           ASSET="iloc-${OS}-${ARCH}"
           echo "Téléchargement (via gh, compatible repo privé) : $ASSET"
