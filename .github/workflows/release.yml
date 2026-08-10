@@ -97,21 +97,20 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y musl-tools
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            # gcc-aarch64-linux-gnu (paquet apt) cible glibc : ses chemins
-            # de recherche de bibliothèques par défaut ne contiennent pas
-            # de libc.a musl compatible. Le lien final échoue alors même
-            # que rustc produit correctement les objets de démarrage musl
-            # self-contained (voir "error: linking with `aarch64-linux-gnu-gcc`
-            # failed: exit status: 1"). On utilise à la place un vrai
-            # cross-toolchain musl prêt à l'emploi (musl.cc) — solution
-            # standard documentée pour ce cas précis de cross-compilation
-            # Rust glibc-host → musl-target sur architecture différente.
-            curl -fsSL --retry 3 --retry-delay 2 -o /tmp/musl-cross.tgz \
-              https://musl.cc/aarch64-linux-musl-cross.tgz
-            sudo tar xzf /tmp/musl-cross.tgz -C /opt
-            echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
-            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
+            # Tentative précédente : gcc-aarch64-linux-gnu (glibc) → échec
+            # de lien (mauvaise libc). Tentative suivante : cross-toolchain
+            # musl.cc téléchargé en direct → hôte tiers injoignable depuis
+            # le runner (curl: (28) Couldn't connect to server, x4, ~9 min).
+            # Solution retenue : `cross` (cross-rs/cross), qui compile dans
+            # un conteneur Docker pré-configuré avec le bon toolchain musl
+            # pour cette cible. Binaire `cross` téléchargé depuis GitHub
+            # Releases, image Docker depuis ghcr.io — les deux sur
+            # l'infrastructure GitHub elle-même, pas un hébergeur tiers
+            # indépendant comme musl.cc.
+            curl -fsSL --retry 3 --retry-delay 2 \
+              https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz \
+              | tar xz -C /tmp
+            sudo mv /tmp/cross /usr/local/bin/cross
           fi
 
       # NOTE : --manifest-path pointe vers ilocker/Cargo.toml car le crate
@@ -120,10 +119,18 @@ jobs:
       # le build échoue explicitement si Cargo.toml et Cargo.lock divergent,
       # plutôt que de dériver vers des versions non testées (voir zeroize/
       # indexmap edition2024 dans le changelog de ce correctif).
+      # NOTE : aarch64-unknown-linux-musl seul passe par `cross` (Docker) —
+      # les 4 autres cibles utilisent `cargo build` natif, inchangé, déjà
+      # validé sur le premier run CI.
       - name: Build release binary
         env:
           RUSTFLAGS: "-C target-feature=+crt-static"
-        run: cargo build --release --locked --target ${{ matrix.target }} --manifest-path ilocker/Cargo.toml
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            cross build --release --locked --target ${{ matrix.target }} --manifest-path ilocker/Cargo.toml
+          else
+            cargo build --release --locked --target ${{ matrix.target }} --manifest-path ilocker/Cargo.toml
+          fi
 
       # Renommer + rendre exécutable (Unix) — chemin corrigé : ilocker/target/...
       - name: Rename binary (Unix)
