@@ -1,6 +1,6 @@
 # ilocker Studio
 
-Centre de commandes visuel pour [ilocker](https://github.com/alphabechirdiallo-netizen/ilocker) — parcourez, cherchez et lancez les 202 commandes sans jamais mémoriser la syntaxe.
+Centre de commandes visuel pour [ilocker](https://github.com/alphabechirdiallo-netizen/ilocker) — parcourez, cherchez et lancez les 213 commandes sans jamais mémoriser la syntaxe.
 
 ## Fonctionnalités
 - Centre de commandes plein écran, catégorisé, avec recherche

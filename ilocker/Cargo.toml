@@ -1,6 +1,6 @@
 [package]
 name = "iloc"
-version = "1.9.0"
+version = "1.10.0"
 edition = "2021"
 description = "ilocker — instant snapshot, P2P & partage universel (standalone)"
 authors = ["ilocker contributors"]
@@ -14,6 +14,11 @@ path = "src/main.rs"
 
 [dependencies]
 reed-solomon-erasure = "6.0.0"
+# Signature RS256 pour le flux OAuth2 JWT-bearer (compte de service GCP,
+# provider_engine.rs). Déjà présent en dépendance TRANSITIVE via
+# hyper-rustls (backend crypto de rustls) — épinglé ici à la version déjà
+# résolue dans Cargo.lock : aucune nouvelle dépendance réelle introduite.
+ring = "=0.17.14"
 # Épinglé : zeroize >=1.9.0 exige edition2024, non stabilisé sur rustc 1.75 (CI/Linux compat)
 zeroize = "=1.8.2"
 indexmap = "=2.7.1"

@@ -12,10 +12,12 @@
 
 use crate::provider_engine;
 use crate::provider_manifest::{self, AuthType, ProviderManifest};
+use crate::provider_registry;
 use crate::provider_store::{self, ProviderProfile};
 use crate::commands::studio_docs::Danger;
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -63,11 +65,13 @@ fn placeholder_manifest_for_slug_check(slug: &str) -> ProviderManifest {
         auth: AuthSchema {
             auth_type: AuthType::None, fields: vec![], header: None,
             value_prefix: String::new(), verify_endpoint: None, verify_field: None, help_url: None,
+            token_url: None, scope: None, jwt_audience: None,
         },
         api: ApiConfig { base_url: "http://127.0.0.1".into() },
         operations: vec![Operation {
             path: vec!["x".into()], method: "GET".into(), endpoint: "/x".into(),
             summary: "x".into(), danger: Danger::Safe, args: vec![], example: None, response_fields: vec![],
+            body_encoding: BodyEncoding::Json, graphql_query: None, extra_headers: vec![], idempotency_header: None, pagination: None,
         }],
     }
 }
@@ -262,6 +266,11 @@ pub async fn run_test(path: PathBuf) -> Result<()> {
 
     let creds = provider_store::ResolvedProviderCredentials {
         profile_name: "test".to_string(),
+        // Compte factice mais STABLE (pas aléatoire) : permet au cache de
+        // jeton OAuth2 de survivre entre plusieurs `iloc provider test`
+        // successifs pendant qu'un développeur itère sur son manifeste,
+        // au lieu de re-échanger un jeton à chaque appel.
+        account: "__test_ephemeral__".to_string(),
         api_url: manifest.api.base_url.clone(),
         fields,
     };
@@ -298,6 +307,160 @@ pub fn run_install_file(path: PathBuf) -> Result<()> {
     println!("{} '{}' installé.", "✓".green().bold(), manifest.provider.name);
     println!("  {} iloc {} <commande>", "Utilisation :".dimmed(), manifest.provider.slug);
     println!("  {} iloc connect {}", "Connexion :  ".dimmed(), manifest.provider.slug);
+    println!();
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  iloc provider install <name> / search / publish — registre
+//  communautaire (session août 2026)
+// ═══════════════════════════════════════════════════════════════
+
+/// Dispatch : `--file <chemin>` installe un manifeste local (inchangé,
+/// voir run_install_file) ; un nom seul l'installe depuis le registre
+/// communautaire. Les deux exclusifs, l'un des deux requis.
+pub async fn run_install(name: Option<String>, file: Option<PathBuf>) -> Result<()> {
+    match (name, file) {
+        (Some(_), Some(_)) => {
+            bail!("Précisez soit un nom de registre, soit --file <chemin> — pas les deux.")
+        }
+        (None, None) => {
+            bail!(
+                "Précisez un nom de provider à installer depuis le registre \
+                 (ex: `iloc provider install linear`), ou --file <chemin> pour un manifeste local."
+            )
+        }
+        (None, Some(path)) => run_install_file(path),
+        (Some(name), None) => run_install_from_registry(&name).await,
+    }
+}
+
+async fn run_install_from_registry(name: &str) -> Result<()> {
+    println!();
+    println!("{} Recherche de '{}' dans le registre communautaire...", "→".cyan(), name);
+
+    let index = provider_registry::fetch_index()
+        .await
+        .context("Impossible de contacter le registre communautaire")?;
+    let entry = index.providers.iter().find(|p| p.slug == name).with_context(|| {
+        format!(
+            "Aucun provider nommé '{}' dans le registre. Essayez `iloc provider search {}`.",
+            name, name
+        )
+    })?;
+
+    println!("  {} {} — {}", entry.name.bold(), format!("v{}", entry.version).dimmed(), entry.description);
+    println!("  {} téléchargement et vérification d'intégrité...", "→".cyan());
+
+    let bytes = provider_registry::fetch_manifest_bytes(entry).await?;
+    let manifest = provider_manifest::parse(&bytes)
+        .context("Le manifeste téléchargé depuis le registre a échoué la validation locale")?;
+
+    if manifest.provider.slug != entry.slug {
+        bail!(
+            "Incohérence du registre : l'entrée annonce le slug '{}' mais le manifeste \
+             déclare '{}'. Installation refusée par prudence.",
+            entry.slug, manifest.provider.slug
+        );
+    }
+
+    let dest = provider_engine::manifest_path(&manifest.provider.slug)?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&dest, &bytes).with_context(|| format!("Écriture de {}", dest.display()))?;
+
+    println!();
+    println!(
+        "{} '{}' installé depuis le registre (intégrité sha256 vérifiée).",
+        "✓".green().bold(),
+        manifest.provider.name
+    );
+    println!("  {} iloc {} <commande>", "Utilisation :".dimmed(), manifest.provider.slug);
+    println!("  {} iloc connect {}", "Connexion :  ".dimmed(), manifest.provider.slug);
+    println!();
+    Ok(())
+}
+
+pub async fn run_search(query: &str) -> Result<()> {
+    println!();
+    println!("{} Recherche '{}' dans le registre communautaire...", "→".cyan(), query);
+
+    let index = provider_registry::fetch_index()
+        .await
+        .context("Impossible de contacter le registre communautaire")?;
+    let results = provider_registry::search_index(&index, query);
+
+    println!();
+    if results.is_empty() {
+        println!("  Aucun résultat pour '{}'.", query);
+        println!();
+        return Ok(());
+    }
+
+    for r in &results {
+        println!("  {} {} — {}", r.slug.cyan().bold(), format!("v{}", r.version).dimmed(), r.description);
+        if !r.tags.is_empty() {
+            println!("    {} {}", "tags:".dimmed(), r.tags.join(", ").dimmed());
+        }
+    }
+    println!();
+    println!("  {} iloc provider install <nom>", "Installer :".dimmed());
+    println!();
+    Ok(())
+}
+
+pub async fn run_publish(path: PathBuf) -> Result<()> {
+    use std::io::Write;
+    let bytes = std::fs::read(&path).with_context(|| format!("Lecture de {}", path.display()))?;
+    let manifest = provider_manifest::parse(&bytes)
+        .context("Le manifeste doit d'abord passer `iloc provider validate` sans erreur")?;
+
+    provider_manifest::validate_for_publish(&manifest)
+        .context("Le manifeste ne respecte pas les règles de publication publique")?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let sha256 = hex::encode(hasher.finalize());
+
+    println!();
+    println!("{} '{}' est valide et prêt pour publication.", "✓".green().bold(), manifest.provider.name);
+    println!();
+    println!("  {} {}", "slug:   ".dimmed(), manifest.provider.slug);
+    println!("  {} {}", "version:".dimmed(), manifest.provider.version);
+    println!("  {} {}", "sha256: ".dimmed(), sha256);
+    println!();
+    println!("{}", "Prochaine étape — soumettre une pull request :".bold());
+    println!("  1. Forkez {}", provider_registry::registry_repo_url());
+    println!("  2. Ajoutez votre fichier : ilocker-registry/providers/{}.toml", manifest.provider.slug);
+    println!("  3. Ajoutez cette entrée à index.json (\"providers\": [...]) :");
+    println!();
+    let entry_json = serde_json::json!({
+        "slug": manifest.provider.slug,
+        "name": manifest.provider.name,
+        "description": manifest.provider.description,
+        "author": manifest.provider.author,
+        "version": manifest.provider.version,
+        "manifest_url": format!(
+            "https://raw.githubusercontent.com/<votre-fork>/main/ilocker-registry/providers/{}.toml",
+            manifest.provider.slug
+        ),
+        "manifest_sha256": sha256,
+        "tags": Vec::<String>::new(),
+    });
+    println!("{}", serde_json::to_string_pretty(&entry_json)?);
+    println!();
+    println!("  4. Ouvrez la pull request — un workflow CI y relance automatiquement");
+    println!("     `iloc provider validate` sur votre manifeste avant toute fusion.");
+    println!();
+
+    print!("  Ouvrir la page du dépôt dans le navigateur maintenant ? [O/n] ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    if !input.trim().eq_ignore_ascii_case("n") {
+        let _ = opener::open(provider_registry::registry_repo_url());
+    }
     println!();
     Ok(())
 }
@@ -401,8 +564,13 @@ pub async fn run_connect(
     }
 
     let api_url = api_url_override.clone().unwrap_or_else(|| manifest.api.base_url.clone());
+    // Généré ICI (avant creds/verify), pas après : si le manifeste utilise
+    // OAuth2, la vérification ci-dessous doit déjà pouvoir mettre en cache
+    // son jeton sous une clé stable — voir ResolvedProviderCredentials::account.
+    let account = format!("{}-{}", profile_name.clone().unwrap_or_else(|| "default".to_string()), short_random());
     let creds = provider_store::ResolvedProviderCredentials {
         profile_name: profile_name.clone().unwrap_or_else(|| "default".to_string()),
+        account: account.clone(),
         api_url: api_url.clone(),
         fields: fields.clone(),
     };
@@ -433,7 +601,6 @@ pub async fn run_connect(
         }
     }
 
-    let account = format!("{}-{}", profile_name.clone().unwrap_or_else(|| "default".to_string()), short_random());
     let profile = ProviderProfile {
         name: profile_name.unwrap_or_else(|| "default".to_string()),
         identity_label,

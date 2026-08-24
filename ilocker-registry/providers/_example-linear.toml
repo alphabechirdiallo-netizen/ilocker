@@ -1,0 +1,80 @@
+# ══════════════════════════════════════════════════════════
+#  EXEMPLE — pas un provider publié. Ce fichier commence par
+#  "_" pour cette raison : `iloc provider install <nom>` ne
+#  peut jamais le résoudre, il n'apparaît dans aucune entrée
+#  de index.json. C'est un gabarit pour comprendre à quoi
+#  ressemble un manifeste réel qui utilise GraphQL — copiez-le
+#  comme point de départ, jamais tel quel.
+#
+#  Valider :  iloc provider validate _example-linear.toml
+#  Tester :   iloc provider test _example-linear.toml
+# ══════════════════════════════════════════════════════════
+
+[provider]
+slug = "linear"
+name = "Linear"
+description = "Suivi d'issues et de projets — API GraphQL"
+author = "Votre nom <email@exemple.com>"
+version = "0.1.0"
+manifest_version = 1
+
+[auth]
+type = "bearer_token"
+header = "Authorization"
+value_prefix = ""
+prompt_label = "Clé API personnelle Linear"
+verify_endpoint = "/graphql"
+help_url = "https://linear.app/settings/api"
+
+[[auth.fields]]
+id = "token"
+label = "Clé API"
+secret = true
+
+[api]
+base_url = "https://api.linear.app"
+
+# ── GraphQL : method="POST" imposé, tous les args en location="body" ──
+# (ils deviennent des variables GraphQL, pas des query/path params).
+# Le texte de graphql_query doit utiliser des variables nommées ($xxx),
+# jamais de valeurs injectées directement dans la requête.
+
+[[operations]]
+path = ["issue", "view"]
+method = "POST"
+endpoint = "/graphql"
+summary = "Affiche une issue par son identifiant"
+danger = "safe"
+example = "iloc linear issue view ENG-123"
+graphql_query = "query($id: String!) { issue(id: $id) { identifier title state { name } url } }"
+
+[[operations.args]]
+id = "id"
+positional = true
+required = true
+help = "Identifiant de l'issue (ex: ENG-123)"
+location = "body"
+
+[[operations]]
+path = ["issue", "create"]
+method = "POST"
+endpoint = "/graphql"
+summary = "Crée une issue"
+danger = "caution"
+example = "iloc linear issue create --team-id abc123 --title \"Corriger le bug X\""
+graphql_query = "mutation($teamId: String!, $title: String!) { issueCreate(input: { teamId: $teamId, title: $title }) { success issue { identifier url } } }"
+
+[[operations.args]]
+id = "team_id"
+long = "team-id"
+required = true
+help = "Identifiant de l'équipe Linear"
+location = "body"
+field = "teamId"
+
+[[operations.args]]
+id = "title"
+long = "title"
+required = true
+help = "Titre de l'issue"
+location = "body"

@@ -814,13 +814,19 @@ async fn trigger_vercel_deploy(project_id: &str, branch: &str, ctx: &DeployConte
 }
 
 fn generate_password() -> String {
+    // OsRng (CSPRNG du système) — remplace un ancien PRNG maison
+    // (xorshift64 seedé par l'horloge, non-cryptographique et prévisible)
+    // utilisé ici pour un vrai secret (mot de passe de base de données).
+    // Même source déjà utilisée ailleurs dans le projet pour du chiffrement
+    // réel (credential_vault.rs, cloud_share_token.rs, commands/github.rs) —
+    // aucune nouvelle dépendance nécessaire. Charset et longueur inchangés.
+    use chacha20poly1305::aead::{rand_core::RngCore, OsRng};
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let mut state = seed as u64 ^ 0x9E3779B97F4A7C15;
+    let mut random_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut random_bytes);
     let mut out = String::with_capacity(32);
-    for _ in 0..32 {
-        state ^= state << 13; state ^= state >> 7; state ^= state << 17;
-        out.push(CHARS[(state as usize) % CHARS.len()] as char);
+    for b in random_bytes {
+        out.push(CHARS[(b as usize) % CHARS.len()] as char);
     }
     out
 }
@@ -857,5 +863,41 @@ pub async fn run(dir: &Path, ctx: DeployContext) -> Result<()> {
 impl DeployState {
     fn clone_for_update(&self) -> DeployState {
         self.clone()
+    }
+}
+
+#[cfg(test)]
+mod generate_password_tests {
+    use super::*;
+
+    #[test]
+    fn has_expected_length_and_charset() {
+        const CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let pw = generate_password();
+        assert_eq!(pw.len(), 32);
+        assert!(pw.chars().all(|c| CHARS.contains(c)), "caractère hors charset: {pw}");
+    }
+
+    #[test]
+    fn is_not_predictable_across_calls() {
+        // Avec l'ancien PRNG maison (seed = horloge), deux appels rapprochés
+        // pouvaient partager le même seed nanoseconde selon la résolution de
+        // l'horloge, ou être trivialement dérivables l'un de l'autre. Avec
+        // OsRng, une collision ou une relation prévisible sur 32 caractères
+        // (~190 bits d'entropie) est écartée pour toute preuve pratique.
+        let a = generate_password();
+        let b = generate_password();
+        let c = generate_password();
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn many_generations_have_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..200 {
+            assert!(seen.insert(generate_password()), "mot de passe dupliqué détecté sur 200 générations");
+        }
     }
 }

@@ -138,8 +138,12 @@ impl AzureClient {
     }
 
     fn https_client(&self) -> Client<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>> {
+        // with_native_roots() — pas with_webpki_roots(). Incohérence corrigée :
+        // même correctif déjà appliqué à github_client.rs, vercel_client.rs,
+        // supabase_client.rs, updater.rs et provider_engine.rs (liste de CA figée
+        // à la compilation qui échoue derrière tout proxy d'entreprise/inspection TLS).
         let https = HttpsConnectorBuilder::new()
-            .with_webpki_roots()
+            .with_native_roots()
             .https_or_http()
             .enable_http1()
             .build();

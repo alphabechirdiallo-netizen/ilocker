@@ -1,0 +1,109 @@
+name: Valide les manifestes du registre communautaire
+
+# Se déclenche sur toute pull request touchant le registre — c'est le
+# seul rempart automatisé avant la revue humaine (voir
+# ilocker-registry/CONTRIBUTING.md). Séparé de release.yml : ce workflow
+# ne construit jamais de binaire de release, seulement un build de
+# développement suffisant pour exécuter `iloc provider validate`.
+on:
+  pull_request:
+    paths:
+      - "ilocker-registry/providers/**"
+      - "ilocker-registry/index.json"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer la toolchain Rust (identique au pin du projet)
+        uses: dtolnay/rust-toolchain@1.75.0
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ilocker/target
+          key: ${{ runner.os }}-cargo-registry-validate-${{ hashFiles('ilocker/Cargo.lock') }}
+
+      # Build de développement, pas --release : ce job n'a besoin que
+      # d'exécuter `provider validate`, jamais de distribuer ce binaire.
+      - name: Compiler iloc (build dev)
+        working-directory: ilocker
+        run: cargo build --locked
+
+      - name: Valider chaque manifeste modifié ou ajouté
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD -- 'ilocker-registry/providers/*.toml' || true)
+          if [ -z "$changed" ]; then
+            echo "Aucun manifeste modifié dans cette PR."
+            exit 0
+          fi
+          fail=0
+          for f in $changed; do
+            echo "── $f ──"
+            if ! ./ilocker/target/debug/iloc provider validate "$f"; then
+              echo "::error file=$f::Validation échouée (voir la sortie ci-dessus)"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Refuser toute PR touchant le code du CLI en plus du registre
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          if git diff --name-only "origin/${{ github.base_ref }}"...HEAD -- 'ilocker/src/**' 'ilocker/Cargo.toml' | grep -q .; then
+            echo "::error::Cette PR modifie le code du CLI (ilocker/src ou Cargo.toml) en plus du registre — à séparer en deux PR distinctes."
+            exit 1
+          fi
+
+      - name: Vérifier la cohérence sha256 / slug de index.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, hashlib, sys, os
+
+          idx_path = "ilocker-registry/index.json"
+          with open(idx_path) as f:
+              idx = json.load(f)
+
+          errors = []
+          seen_slugs = set()
+          for entry in idx.get("providers", []):
+              slug = entry["slug"]
+              if slug in seen_slugs:
+                  errors.append(f"slug dupliqué dans index.json : {slug}")
+              seen_slugs.add(slug)
+
+              path = f"ilocker-registry/providers/{slug}.toml"
+              if not os.path.exists(path):
+                  errors.append(f"{slug} : {path} introuvable")
+                  continue
+              with open(path, "rb") as f:
+                  data = f.read()
+
+              actual = hashlib.sha256(data).hexdigest()
+              if actual != entry["manifest_sha256"]:
+                  errors.append(
+                      f"{slug} : sha256 déclaré ({entry['manifest_sha256']}) "
+                      f"!= sha256 réel de {path} ({actual})"
+                  )
+
+              expected_url_suffix = f"/main/ilocker-registry/providers/{slug}.toml"
+              if not entry["manifest_url"].endswith(expected_url_suffix):
+                  errors.append(
+                      f"{slug} : manifest_url ne pointe pas vers {expected_url_suffix} "
+                      f"(reçu : {entry['manifest_url']})"
+                  )
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}")
+              sys.exit(1)
+          print(f"{len(idx.get('providers', []))} entrée(s) cohérente(s).")
+          PYEOF

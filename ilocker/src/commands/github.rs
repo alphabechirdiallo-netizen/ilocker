@@ -96,6 +96,10 @@ use crate::github_client::{
 };
 use crate::github_store::{self, GitHubCredentials, GitHubProfile};
 use anyhow::{bail, Context, Result};
+// base64::encode/decode (fonctions libres) sont dépréciées depuis base64 0.21 —
+// migré vers l'API Engine ; STANDARD reproduit exactement le même alphabet et
+// padding que l'ancien comportement par défaut (requis par l'API GitHub Secrets).
+use base64::Engine as _;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
@@ -1560,7 +1564,9 @@ pub async fn run_pr_ready(
     sp.finish_and_clear();
 
     let sp2 = spinner(if draft { "Conversion en draft…" } else { "Marquage comme prête…" });
-    client.set_pr_draft(&pr.head.label, draft).await?;
+    // node_id GraphQL requis ici, PAS pr.head.label (qui vaut "owner:branche" —
+    // bug réel corrigé : l'appel GraphQL échouait systématiquement avant ce correctif).
+    client.set_pr_draft(&pr.node_id, draft).await?;
     sp2.finish_and_clear();
 
     println!(
@@ -2032,7 +2038,7 @@ fn encrypt_secret_value(public_key_b64: &str, secret: &str) -> Result<String> {
     use crypto_box::aead::{Aead, OsRng};
     use crypto_box::{PublicKey, SalsaBox, SecretKey};
 
-    let pk_bytes = base64::decode(public_key_b64)
+    let pk_bytes = base64::engine::general_purpose::STANDARD.decode(public_key_b64)
         .context("Décodage base64 de la clé publique GitHub")?;
     if pk_bytes.len() != 32 {
         bail!("La clé publique GitHub doit faire 32 bytes (X25519), obtenu: {}", pk_bytes.len());
@@ -2063,7 +2069,7 @@ fn encrypt_secret_value(public_key_b64: &str, secret: &str) -> Result<String> {
     sealed.extend_from_slice(ephemeral_pk.as_bytes());
     sealed.extend_from_slice(&ciphertext);
 
-    Ok(base64::encode(sealed))
+    Ok(base64::engine::general_purpose::STANDARD.encode(sealed))
 }
 
 pub async fn run_secret_delete(
@@ -2377,12 +2383,12 @@ mod tests {
 
         let recipient_sk = SecretKey::generate(&mut OsRng);
         let recipient_pk = recipient_sk.public_key();
-        let recipient_pk_b64 = base64::encode(recipient_pk.as_bytes());
+        let recipient_pk_b64 = base64::engine::general_purpose::STANDARD.encode(recipient_pk.as_bytes());
 
         let secret = "ghp_test_secret_value";
         let sealed_b64 = encrypt_secret_value(&recipient_pk_b64, secret)
             .expect("encrypt_secret_value doit réussir");
-        let sealed = base64::decode(&sealed_b64).unwrap();
+        let sealed = base64::engine::general_purpose::STANDARD.decode(&sealed_b64).unwrap();
         assert_eq!(sealed.len(), 32 + secret.len() + 16, "32 (clé éphémère) + message + 16 (tag Poly1305)");
 
         // Rouvrir avec les mêmes primitives, en suivant le protocole crypto_box_seal
@@ -2408,7 +2414,7 @@ mod tests {
         use crypto_box::SecretKey;
 
         let recipient_sk = SecretKey::generate(&mut OsRng);
-        let recipient_pk_b64 = base64::encode(recipient_sk.public_key().as_bytes());
+        let recipient_pk_b64 = base64::engine::general_purpose::STANDARD.encode(recipient_sk.public_key().as_bytes());
 
         let a = encrypt_secret_value(&recipient_pk_b64, "meme-secret").unwrap();
         let b = encrypt_secret_value(&recipient_pk_b64, "meme-secret").unwrap();
@@ -2417,7 +2423,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_public_key_length() {
-        let bad_key = base64::encode(b"trop court");
+        let bad_key = base64::engine::general_purpose::STANDARD.encode(b"trop court");
         let result = encrypt_secret_value(&bad_key, "secret");
         assert!(result.is_err());
     }

@@ -670,11 +670,25 @@ fn dirs_home() -> Option<PathBuf> {
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else if max > 3 {
-        format!("{}...", &s[..max - 3])
+        return s.to_string();
+    }
+    // Ne jamais couper au milieu d'un caractère UTF-8 multi-octets — un message
+    // de snapshot accentué (courant ici, l'outil est francophone) pouvait faire
+    // paniquer le dashboard si la coupe tombait en plein milieu d'un caractère
+    // comme 'é'. On recule jusqu'à la frontière de caractère valide la plus proche.
+    let safe_boundary = |limit: usize| -> usize {
+        let mut end = limit.min(s.len());
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        end
+    };
+    if max > 3 {
+        let end = safe_boundary(max - 3);
+        format!("{}...", &s[..end])
     } else {
-        s[..max].to_string()
+        let end = safe_boundary(max);
+        s[..end].to_string()
     }
 }
 
@@ -684,5 +698,69 @@ fn supports_true_color() -> bool {
     match std::env::var("COLORTERM").as_deref() {
         Ok("truecolor") | Ok("24bit") => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_short_string_is_unchanged() {
+        assert_eq!(truncate("court", 30), "court");
+    }
+
+    #[test]
+    fn truncate_ascii_matches_previous_behavior() {
+        // Comportement inchangé pour de l'ASCII pur : chaque offset d'octet
+        // est une frontière de caractère valide, donc identique à l'ancienne
+        // implémentation naïve.
+        let s = "a".repeat(50);
+        let out = truncate(&s, 20);
+        assert_eq!(out, format!("{}...", "a".repeat(17)));
+        assert_eq!(out.len(), 20);
+    }
+
+    #[test]
+    fn truncate_never_exceeds_max_bytes() {
+        let s = "a".repeat(50);
+        for max in 0..s.len() + 5 {
+            assert!(truncate(&s, max).len() <= max);
+        }
+    }
+
+    #[test]
+    fn truncate_exact_case_that_panicked_before_the_fix() {
+        // Message de snapshot réaliste et francophone — panique reproduite lors de
+        // l'audit avec max=30 (coupe en plein milieu du 'é' de "réseau").
+        let msg = "fix: gestion des erreurs r\u{e9}seau pendant le t\u{e9}l\u{e9}chargement des chunks Hyperscale";
+        let out = truncate(msg, 30);
+        assert!(out.ends_with("..."));
+        assert!(out.len() <= 30);
+    }
+
+    #[test]
+    fn truncate_never_panics_across_all_cut_points_of_a_multibyte_string() {
+        // Teste EXHAUSTIVEMENT chaque position de coupe possible autour d'un
+        // caractère multi-octets ('é' = 2 octets) pour bannir toute régression.
+        let msg = "fix: gestion des erreurs r\u{e9}seau pendant le t\u{e9}l\u{e9}chargement des chunks Hyperscale";
+        for max in 0..=msg.len() + 3 {
+            let out = truncate(msg, max);
+            assert!(out.len() <= max);
+            assert!(out.chars().count() <= out.len()); // UTF-8 valide par construction de String
+        }
+    }
+
+    #[test]
+    fn truncate_handles_multibyte_char_at_every_position() {
+        let s = "12345\u{e9}67890"; // 'é' aux octets 5..7
+        for max in 0..=s.len() {
+            let _ = truncate(s, max); // ne doit jamais paniquer
+        }
+    }
+
+    #[test]
+    fn truncate_max_zero_returns_empty() {
+        assert_eq!(truncate("bonjour", 0), "");
     }
 }

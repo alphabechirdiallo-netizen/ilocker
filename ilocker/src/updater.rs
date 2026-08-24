@@ -224,26 +224,65 @@ pub async fn download_binary(url: &str, dest: &PathBuf) -> Result<()> {
         .build();
     let client: Client<_, Body> = Client::builder().build(https);
 
-    // Suivre les redirections manuellement (GitHub redirige vers S3)
-    let final_url = follow_redirects(url).await
-        .unwrap_or_else(|_| url.to_string());
-
     let token = resolve_github_token();
-    let mut builder = Request::get(&final_url)
-        .header("User-Agent", format!("iloc/{}", CURRENT_VERSION));
     // Sur un asset d'API (URL de la forme /releases/assets/{id}),
     // l'Accept octet-stream + le token sont nécessaires pour recevoir
     // le binaire plutôt qu'une réponse JSON de métadonnées.
-    if url.contains("/releases/assets/") {
+    let is_asset_api_url = url.contains("/releases/assets/");
+
+    let mut builder = Request::get(url)
+        .header("User-Agent", format!("iloc/{}", CURRENT_VERSION));
+    if is_asset_api_url {
         builder = builder.header("Accept", "application/octet-stream");
         if let Some(t) = &token {
             builder = builder.header("Authorization", format!("token {}", t));
         }
     }
-    let req = builder.body(Body::empty())?;
-
-    let resp = client.request(req).await
+    let mut resp = client.request(builder.body(Body::empty())?).await
         .context("Échec du téléchargement")?;
+
+    // Suivre les VRAIES redirections HTTP (bug réel corrigé — hyper ne suit
+    // JAMAIS les redirections automatiquement, et l'ancien code affirmait à
+    // tort que les URLs de release asset GitHub ne redirigeaient pas :
+    // vérifié empiriquement, elles répondent TOUJOURS 302 vers
+    // release-assets.githubusercontent.com, aussi bien pour les URLs
+    // publiques (browser_download_url) que pour l'endpoint API authentifié
+    // des repos privés. Sans ce correctif, download_binary() recevait le
+    // corps de la réponse 302 (pas le binaire) et échouait immédiatement
+    // avec "Téléchargement échoué — HTTP 302" — cassait iloc update ET
+    // l'installation automatique de l'extension par iloc studio open
+    // (commands/studio.rs::install_extension appelle cette même fonction).
+    let mut hops: u8 = 0;
+    while resp.status().is_redirection() {
+        hops += 1;
+        if hops > 5 {
+            bail!("Trop de redirections HTTP ({hops} sauts) lors du téléchargement — abandon.");
+        }
+        let location = resp
+            .headers()
+            .get(hyper::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Redirection HTTP {} reçue sans en-tête Location.",
+                    resp.status()
+                )
+            })?
+            .to_string();
+        // Ne PAS renvoyer Authorization/Accept vers l'hôte de redirection
+        // (typiquement release-assets.githubusercontent.com, distinct de
+        // api.github.com/github.com) : l'URL signée dans Location porte déjà
+        // sa propre autorisation, et un token GitHub n'a rien à faire chez
+        // un hôte tiers — même comportement par défaut que curl -L sur un
+        // changement d'hôte.
+        let next_req = Request::get(&location)
+            .header("User-Agent", format!("iloc/{}", CURRENT_VERSION))
+            .body(Body::empty())?;
+        resp = client
+            .request(next_req)
+            .await
+            .context("Échec du téléchargement (après redirection)")?;
+    }
 
     if !resp.status().is_success() {
         bail!("Téléchargement échoué — HTTP {}", resp.status());
@@ -278,14 +317,6 @@ pub async fn download_binary(url: &str, dest: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Suit les redirections HTTP (max 5) — nécessaire pour GitHub Assets → S3
-async fn follow_redirects(url: &str) -> Result<String> {
-    // Pour simplifier : on retourne l'URL telle quelle.
-    // hyper gère les redirections via la réponse 302/301.
-    // Dans la pratique, hyper ne suit pas auto les redirects,
-    // mais GitHub direct download URL ne redirige pas depuis l'API.
-    Ok(url.to_string())
-}
 
 // ── Swap atomique du binaire ─────────────────────────────────
 

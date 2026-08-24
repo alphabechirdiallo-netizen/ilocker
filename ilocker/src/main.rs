@@ -1,5 +1,5 @@
 // ============================================================
-//  ilocker (iloc) — v1.9.0  (Standalone Edition)
+//  ilocker (iloc) — v1.10.0  (Standalone Edition)
 //
 //  Architecture : binaire autonome, zéro serveur requis.
 //  Distribution : USB, Xender, Bluetooth, email, n'importe quoi.
@@ -40,6 +40,7 @@ mod protocol;
 mod provider_manifest;
 mod provider_store;
 mod provider_engine;
+mod provider_registry;
 mod relay_client;
 mod s3_client;
 mod snapshot;
@@ -55,9 +56,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name    = "iloc",
-    version = "1.9.0",
+    version = "1.10.0",
     about   = "ilocker — instant snapshot, Zero-Knowledge P2P & partage universel",
-    long_about = "ilocker v1.9.0 — Standalone Edition\n\
+    long_about = "ilocker v1.10.0 — Standalone Edition\n\
                   \n\
                   Aucun serveur requis. Distribuez iloc par USB, Xender,\n\
                   Bluetooth, email — la commande s'installe dans le système.\n\
@@ -324,9 +325,25 @@ enum ProviderAction {
     Test {
         path: std::path::PathBuf,
     },
-    /// Installe un manifeste localement depuis un fichier
+    /// Installe un manifeste — depuis le registre communautaire par défaut
+    /// (nom), ou localement avec --file (chemin)
     Install {
-        /// Chemin du manifeste à installer
+        /// Nom du provider dans le registre (ex: "linear")
+        name: Option<String>,
+        /// Chemin d'un manifeste local à installer directement
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+    },
+    /// Cherche des providers dans le registre communautaire
+    Search {
+        /// Terme de recherche (nom, description, tags)
+        query: String,
+    },
+    /// Valide un manifeste pour publication puis prépare sa soumission au
+    /// registre communautaire (aucune donnée envoyée sans confirmation —
+    /// ouvre une pull request pré-remplie sur GitHub)
+    Publish {
+        /// Chemin du manifeste à publier
         #[arg(long)]
         file: std::path::PathBuf,
     },
@@ -1665,7 +1682,9 @@ async fn main() -> Result<()> {
             ProviderAction::Init { slug } => commands::provider::run_init(slug)?,
             ProviderAction::Validate { path } => commands::provider::run_validate(path)?,
             ProviderAction::Test { path } => commands::provider::run_test(path).await?,
-            ProviderAction::Install { file } => commands::provider::run_install_file(file)?,
+            ProviderAction::Install { name, file } => commands::provider::run_install(name, file).await?,
+            ProviderAction::Search { query } => commands::provider::run_search(&query).await?,
+            ProviderAction::Publish { file } => commands::provider::run_publish(file).await?,
             ProviderAction::List => commands::provider::run_list()?,
             ProviderAction::Remove { slug, yes } => commands::provider::run_remove(slug, yes)?,
             ProviderAction::Profile { action } => match action {

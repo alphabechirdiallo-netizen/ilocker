@@ -126,7 +126,7 @@ Source : GitHub Releases uniquement (`api.github.com/repos/alphabechirdiallo-net
 
 ## Centre de commandes — extension VS Code « ilocker Studio »
 
-Pour ne jamais avoir à mémoriser la syntaxe des 202 commandes, une extension
+Pour ne jamais avoir à mémoriser la syntaxe des 211 commandes, une extension
 compagnon s'installe dans VS Code (et les forks compatibles : Cursor,
 Windsurf).
 
@@ -140,7 +140,7 @@ Deux vues, une seule source de vérité :
 
 - **Centre de commandes** (`iloc studio open`, ou icône ilocker dans la barre
   d'activité → *Ouvrir le centre de commandes*) — plein écran, 4 onglets :
-  - *Commandes* : les 202 commandes catégorisées, recherche instantanée,
+  - *Commandes* : les 211 commandes catégorisées, recherche instantanée,
     clic pour lancer directement (ou formulaire généré si des arguments
     sont nécessaires — jamais de commande incomplète envoyée au terminal)
   - *Snapshots* : historique visuel de `iloc log`
@@ -149,7 +149,7 @@ Deux vues, une seule source de vérité :
   - *Activité* : les commandes réellement lancées depuis l'extension
 - **Assistant docké** (icône ilocker dans la barre latérale) — rétractable
   nativement par VS Code, affiche l'état du projet courant et suggère la
-  prochaine action logique, sans jamais dupliquer les 202 commandes dans
+  prochaine action logique, sans jamais dupliquer les 211 commandes dans
   un espace trop petit pour les afficher utilement.
 
 Toute donnée provient de `iloc studio manifest/snapshots/deploy-status/
@@ -252,7 +252,7 @@ La publication vers un registre public partagé n'est pas encore disponible
 
 ---
 
-## Toutes les commandes disponibles (211)
+## Toutes les commandes disponibles (213)
 
 Générées directement depuis la structure réelle du CLI (`iloc studio manifest`) et son contenu éditorial associé — cette liste ne peut pas diverger du binaire : un test automatique (`cargo test`) échoue si une commande existe sans description ici, ou si une description mentionne un argument qui n'existe pas réellement.
 
@@ -482,7 +482,7 @@ Légende : ⚠️ modifie un état externe (pas trivialement annulable) · 🔴 
   Crée un nouveau check sur un déploiement.
 - `iloc vercel check list <DEPLOYMENT_ID> [--profile <val>]`
   Liste les checks (contrôles CI/qualité) d'un déploiement.
-- `iloc vercel check update <DEPLOYMENT_ID> <CHECK_ID> [--status <val>] [--conclusion <val>] [--profile <val>]`
+- `iloc vercel check update <DEPLOYMENT_ID> <CHECK_ID> --status <val> [--conclusion <val>] [--profile <val>]`
   Met à jour le statut ou la conclusion d'un check existant.
 - `iloc vercel deploy [--prod] [--force] [--wait] [--project <val>] [--branch <val>] [--sha <val>] [--timeout <val>] [--profile <val>] [--yes]` ⚠️
   Déclenche un déploiement Vercel du projet lié.
@@ -506,7 +506,7 @@ Légende : ⚠️ modifie un état externe (pas trivialement annulable) · 🔴 
   Ajoute un domaine à votre compte, ou le lie à un projet précis.
 - `iloc vercel domain check <DOMAIN> [--profile <val>]`
   Vérifie si un nom de domaine est disponible à l'achat via Vercel.
-- `iloc vercel domain dns add <DOMAIN> <NAME> [--type <val>] <VALUE> [--ttl <val>] [--priority <val>] [--profile <val>]` ⚠️
+- `iloc vercel domain dns add <DOMAIN> <NAME> --type <val> <VALUE> [--ttl <val>] [--priority <val>] [--profile <val>]` ⚠️
   Ajoute un enregistrement DNS à un domaine géré par Vercel.
 - `iloc vercel domain dns list <DOMAIN> [--profile <val>]`
   Liste les enregistrements DNS d'un domaine géré par Vercel.
@@ -656,8 +656,12 @@ Légende : ⚠️ modifie un état externe (pas trivialement annulable) · 🔴 
 
 - `iloc provider init <SLUG>`
   Crée un nouveau manifeste de provider tiers (fichier TOML commenté prêt à éditer).
-- `iloc provider install --file <val>`
-  Installe localement un manifeste de provider depuis un fichier.
+- `iloc provider install [NAME] [--file <val>]`
+  Installe un manifeste de provider — depuis le registre communautaire (nom), ou localement (--file).
+- `iloc provider search <QUERY>`
+  Cherche des providers publiés dans le registre communautaire.
+- `iloc provider publish --file <val>`
+  Valide un manifeste selon les règles de publication puis prépare sa soumission au registre communautaire.
 - `iloc provider list`
   Liste les providers tiers installés localement.
 - `iloc provider profile list <SLUG>`
@@ -721,12 +725,6 @@ Légende : ⚠️ modifie un état externe (pas trivialement annulable) · 🔴 
   Vérifie et installe la dernière version d'ilocker depuis GitHub Releases.
 - `iloc completion <SHELL> [--setup]`
   Génère un script de complétion shell (Tab pour compléter les commandes et options).
-
-
----
-
-
----
 
 ## Sécurité des credentials — vue d'ensemble
 

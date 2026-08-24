@@ -1,7 +1,7 @@
 {
   "name": "ilocker-studio",
   "displayName": "ilocker Studio",
-  "description": "Centre de commandes visuel pour ilocker — parcourez, cherchez et lancez les 211 commandes sans jamais mémoriser la syntaxe.",
+  "description": "Centre de commandes visuel pour ilocker — parcourez, cherchez et lancez les 213 commandes sans jamais mémoriser la syntaxe.",
   "version": "0.1.0",
   "publisher": "ilocker",
   "engines": { "vscode": "^1.85.0" },

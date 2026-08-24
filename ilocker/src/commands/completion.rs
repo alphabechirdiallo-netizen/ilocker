@@ -63,7 +63,7 @@ _iloc_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local -r COMMANDS="init save undo log status sentinel selfinstall update share clone transfer-status dashboard completion hyperscale vault node login logout whoami config push pull cloud connect github vercel supabase deploy"
+    local -r COMMANDS="init save undo log status sentinel selfinstall update share clone transfer-status dashboard completion studio hyperscale vault node login logout whoami config push pull cloud connect provider github vercel supabase deploy"
     local -r SENTINEL_CMDS="init enable disable status uninstall"
     local -r COMPLETION_SHELLS="bash zsh"
     local -r HYPERSCALE_CMDS="push clone export status config node"
@@ -77,6 +77,9 @@ _iloc_completions() {
     local -r CONFIG_CLOUD_CMDS="add list use remove"
     local -r CLOUD_CMDS="usage gc doctor verify"
     local -r CONNECT_SERVICES="github vercel supabase"
+    local -r STUDIO_CMDS="open"
+    local -r PROVIDER_CMDS="init validate test install search publish list remove profile"
+    local -r PROVIDER_PROFILE_CMDS="list use remove"
     local -r GITHUB_CMDS="list use status remove repo branch issue pr release actions secret collab webhook search"
     local -r VERCEL_CMDS="list use status remove deploy inspect project deployment env domain alias secret edge webhook check team"
     local -r SUPABASE_CMDS="list use status remove org project keys sql table extension migration function secret branch advisor"
@@ -181,6 +184,12 @@ _iloc_completions() {
             COMPREPLY=($(compgen -W "--check --help" -- "$cur"))
             ;;
 
+        studio)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "$STUDIO_CMDS" -- "$cur"))
+            fi
+            ;;
+
         hyperscale)
             if [[ $cword -eq 2 ]]; then
                 COMPREPLY=($(compgen -W "$HYPERSCALE_CMDS" -- "$cur"))
@@ -233,6 +242,14 @@ _iloc_completions() {
                 COMPREPLY=($(compgen -W "$CONNECT_SERVICES" -- "$cur"))
             else
                 COMPREPLY=($(compgen -W "--name --token --api-url --help" -- "$cur"))
+            fi
+            ;;
+
+        provider)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=($(compgen -W "$PROVIDER_CMDS" -- "$cur"))
+            elif [[ $cword -eq 3 ]] && [[ "${words[2]}" == "profile" ]]; then
+                COMPREPLY=($(compgen -W "$PROVIDER_PROFILE_CMDS" -- "$cur"))
             fi
             ;;
 
@@ -315,6 +332,7 @@ _iloc() {
         'transfer-status:Show the status of an in-progress transfer'
         'dashboard:Open the interactive TUI dashboard'
         'completion:Generate shell completion scripts'
+        'studio:Open the VS Code command center (installs the extension if needed)'
         'hyperscale:Multi-cloud Reed-Solomon erasure-coded backup'
         'vault:Externalized vault status, migration, mirrors, backup tiers'
         'node:Join or manage the optional mesh network'
@@ -326,6 +344,7 @@ _iloc() {
         'pull:Pull a snapshot from your own cloud (BYOC)'
         'cloud:BYOC cloud usage, garbage collection, diagnostics'
         'connect:Connect a GitHub, Vercel, or Supabase account'
+        'provider:Manage declarative third-party integration providers'
         'github:GitHub repos, branches, issues, PRs, releases, CI'
         'vercel:Vercel projects, deployments, env vars, domains'
         'supabase:Supabase projects, migrations, edge functions, branches'
@@ -390,6 +409,26 @@ _iloc() {
         'github:Connect a GitHub account'
         'vercel:Connect a Vercel account'
         'supabase:Connect a Supabase account'
+    )
+
+    local -a studio_cmds
+    studio_cmds=(
+        'open:Open the VS Code command center'
+    )
+
+    local -a provider_cmds
+    provider_cmds=(
+        'init:Scaffold a new provider manifest' 'validate:Validate a manifest file'
+        'test:Test-run a manifest against its provider' 'install:Install a manifest file'
+        'search:Search the community registry' 'publish:Prepare a manifest for registry publication'
+        'list:List installed providers' 'remove:Remove an installed provider'
+        'profile:Manage credential profiles for a provider'
+    )
+
+    local -a provider_profile_cmds
+    provider_profile_cmds=(
+        'list:List profiles for a provider' 'use:Switch the active profile'
+        'remove:Remove a profile'
     )
 
     local -a github_cmds
@@ -508,6 +547,13 @@ _iloc() {
                         '(-h --help)'{-h,--help}'[Show help]'
                     ;;
 
+                studio)
+                    _arguments '1:subcommand:->studio_sub'
+                    if [[ $state == studio_sub ]]; then
+                        _describe 'studio commands' studio_cmds
+                    fi
+                    ;;
+
                 hyperscale)
                     _arguments '1:subcommand:->hyperscale_sub' '*::hargs:->hargs'
                     if [[ $state == hyperscale_sub ]]; then
@@ -560,6 +606,18 @@ _iloc() {
                         '(-h --help)'{-h,--help}'[Show help]'
                     if [[ $state == connect_service ]]; then
                         _describe 'services' connect_services
+                    fi
+                    ;;
+
+                provider)
+                    _arguments '1:subcommand:->provider_sub' '*::pargs:->pargs'
+                    if [[ $state == provider_sub ]]; then
+                        _describe 'provider commands' provider_cmds
+                    elif [[ $state == pargs ]] && [[ $words[1] == profile ]]; then
+                        _arguments '1:subcommand:->provider_profile_sub'
+                        if [[ $state == provider_profile_sub ]]; then
+                            _describe 'provider profile commands' provider_profile_cmds
+                        fi
                     fi
                     ;;
 

@@ -3920,14 +3920,17 @@
     }
   },
   "provider.install": {
-    "summary": "Installe localement un manifeste de provider depuis un fichier.",
-    "details": "Valide puis copie le manifeste vers ~/.config/ilocker/providers/<slug>/manifest.toml. Une fois installé, le provider devient une commande de premier niveau (iloc <slug> ...) sans qu'ilocker ait été recompilé. L'installation depuis un registre public partagé n'est pas encore disponible à ce jour — seule l'installation depuis un fichier local l'est.",
-    "example": "iloc provider install --file linear.provider.toml",
+    "summary": "Installe un manifeste de provider — depuis le registre communautaire (nom), ou localement (--file).",
+    "details": "Deux modes : `iloc provider install <nom>` télécharge et installe un provider publié au registre communautaire (l'intégrité du fichier téléchargé est vérifiée par sha256 avant toute écriture sur disque — une correspondance invalide bloque l'installation) ; `iloc provider install --file <chemin>` installe directement un manifeste local, sans passer par le registre. Dans les deux cas, le manifeste est validé avant d'être copié vers ~/.config/ilocker/providers/<slug>/manifest.toml, et devient alors une commande de premier niveau (iloc <slug> ...) sans qu'ilocker ait été recompilé.",
+    "example": "iloc provider install linear",
     "prerequisites": [],
     "danger": "safe",
     "args": {
+      "name": {
+        "description": "Nom du provider à installer depuis le registre communautaire (ex: \"linear\"). Omis si --file est utilisé."
+      },
       "file": {
-        "description": "Chemin du manifeste TOML validé à installer."
+        "description": "Chemin d'un manifeste TOML local à installer directement, sans passer par le registre."
       }
     }
   },
@@ -3996,6 +3999,32 @@
       },
       "yes": {
         "description": "Confirme automatiquement sans demander, pour les scripts et l'automatisation."
+      }
+    }
+  },
+  "provider.search": {
+    "summary": "Cherche des providers publiés dans le registre communautaire.",
+    "details": "Télécharge l'index du registre communautaire (voir `iloc provider publish` pour la publication) et filtre par sous-chaîne insensible à la casse sur le nom, le slug, la description et les tags de chaque entrée. N'installe rien : utilisez `iloc provider install <nom>` sur un résultat pour l'installer.",
+    "example": "iloc provider search project-management",
+    "prerequisites": [],
+    "danger": "safe",
+    "args": {
+      "query": {
+        "description": "Terme de recherche (nom, description ou tag)."
+      }
+    }
+  },
+  "provider.publish": {
+    "summary": "Valide un manifeste selon les règles de publication puis prépare sa soumission au registre communautaire.",
+    "details": "Applique les règles de validation strictes du registre public (HTTPS pur sans exception localhost, description et exemple obligatoires sur chaque opération), calcule le sha256 du fichier, puis affiche l'entrée JSON exacte à ajouter à l'index du registre ainsi que les étapes pour soumettre une pull request (fork, ajout du fichier, ajout de l'entrée). Aucune donnée n'est envoyée à un serveur contrôlé par ilocker : la publication passe entièrement par une pull request sur le dépôt Git public du registre. Propose d'ouvrir ce dépôt dans le navigateur (confirmation demandée).",
+    "example": "iloc provider publish --file linear.provider.toml",
+    "prerequisites": [
+      "Le manifeste doit déjà passer `iloc provider validate` sans erreur."
+    ],
+    "danger": "safe",
+    "args": {
+      "file": {
+        "description": "Chemin du manifeste TOML à publier."
       }
     }
   }

@@ -36,6 +36,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 const KR_FIELDS_KEY: &str = "auth_fields";
+/// Espace de nommage SÉPARÉ de KR_FIELDS_KEY : le jeton OAuth2 mis en
+/// cache n'est jamais mélangé aux identifiants longue-durée (client_id/
+/// client_secret / service_account_json) que l'utilisateur a fournis —
+/// même isolation de préoccupations que le reste de ce fichier.
+const KR_OAUTH_CACHE_KEY: &str = "oauth_cache";
 
 fn kr_service(slug: &str) -> String {
     format!("ilocker-provider-{}", slug)
@@ -70,6 +75,11 @@ pub struct ProviderProfiles {
 #[derive(Debug, Clone)]
 pub struct ResolvedProviderCredentials {
     pub profile_name: String,
+    /// Clé stable de trousseau (`ProviderProfile::account`) — nécessaire
+    /// en plus de `profile_name` pour que le moteur puisse lire/écrire
+    /// le cache de jeton OAuth2 (voir save_oauth_cache/load_oauth_cache),
+    /// qui est indexé par account, pas par le nom de profil affiché.
+    pub account: String,
     pub api_url: String,
     /// Toutes les valeurs de auth.fields (ex: {"token": "…"} ou
     /// {"username": "…", "password": "…"}), déchiffrées.
@@ -160,6 +170,7 @@ pub fn require_credentials(
         .unwrap_or_else(|| manifest.api.base_url.clone());
     Ok(ResolvedProviderCredentials {
         profile_name: profile.name,
+        account: profile.account,
         api_url,
         fields,
     })
@@ -207,6 +218,7 @@ pub fn remove_profile(slug: &str, name: &str) -> Result<bool> {
     }
     if let Some(account) = removed_account {
         let _ = delete_fields(slug, &account);
+        clear_oauth_cache(slug, &account);
     }
     if cfg.active.as_deref() == Some(name) {
         cfg.active = cfg.profiles.first().map(|p| p.name.clone());
@@ -226,6 +238,7 @@ pub fn purge_all(slug: &str) -> Result<()> {
     let cfg = load_profiles(slug)?;
     for p in &cfg.profiles {
         let _ = delete_fields(slug, &p.account);
+        clear_oauth_cache(slug, &p.account);
     }
     let path = provider_config_path(slug)?;
     if path.exists() {
@@ -321,6 +334,77 @@ pub fn delete_fields(slug: &str, account: &str) -> Result<()> {
     }
     fallback_delete(slug, account);
     Ok(())
+}
+
+// ── Cache de jeton OAuth2 (client_credentials / service_account) ──
+//
+// Même mécanisme de stockage que save_fields/load_fields (trousseau +
+// repli chiffré, vérification par relecture), mais dans un espace de
+// nommage séparé (KR_OAUTH_CACHE_KEY) : ce n'est pas un identifiant
+// fourni par l'utilisateur, c'est un jeton à courte durée de vie que
+// le moteur obtient et renouvelle lui-même. L'isoler évite que la
+// suppression/l'écrasement de l'un affecte accidentellement l'autre,
+// et rend `iloc provider profile remove` (qui purge tout via
+// purge_all) trivialement correct : un seul point de suppression par
+// compte suffit toujours à tout effacer proprement.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthTokenCache {
+    pub access_token: String,
+    /// Timestamp Unix (secondes) d'expiration du jeton.
+    pub expires_at: i64,
+}
+
+pub fn save_oauth_cache(slug: &str, account: &str, cache: &OAuthTokenCache) -> Result<()> {
+    let cache_json = serde_json::to_string(cache).context("Sérialisation du cache OAuth2")?;
+    let user = format!("{}.{}", account, KR_OAUTH_CACHE_KEY);
+    let kr_ok = (|| -> Result<()> {
+        let entry = Entry::new(&kr_service(slug), &user).map_err(|e| anyhow::anyhow!("{}", e))?;
+        entry.set_password(&cache_json).context("écriture trousseau (cache OAuth2)")?;
+        let readback = Entry::new(&kr_service(slug), &user)
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+            .get_password()
+            .context("vérification post-écriture (cache OAuth2)")?;
+        if readback != cache_json {
+            anyhow::bail!("le trousseau a accepté l'écriture mais relit une valeur différente");
+        }
+        Ok(())
+    })();
+
+    match kr_ok {
+        Ok(()) => Ok(()),
+        // Silencieux (pas de warning utilisateur ici, contrairement à
+        // save_fields) : un cache est par nature un optimisation, pas
+        // une donnée dont la perte est visible ou grave — le prochain
+        // appel referait simplement l'échange de jeton.
+        Err(_) => fallback_save(slug, &format!("{}.oauth", account), &cache_json),
+    }
+}
+
+pub fn load_oauth_cache(slug: &str, account: &str) -> Result<Option<OAuthTokenCache>> {
+    let user = format!("{}.{}", account, KR_OAUTH_CACHE_KEY);
+    let try_kr = (|| -> Result<String> {
+        let entry = Entry::new(&kr_service(slug), &user).map_err(|e| anyhow::anyhow!("{}", e))?;
+        entry.get_password().map_err(|e| anyhow::anyhow!("{}", e))
+    })();
+
+    let cache_json = match try_kr {
+        Ok(j) => j,
+        Err(_) => match fallback_load(slug, &format!("{}.oauth", account)) {
+            Ok(j) => j,
+            Err(_) => return Ok(None),
+        },
+    };
+
+    Ok(serde_json::from_str(&cache_json).ok())
+}
+
+pub fn clear_oauth_cache(slug: &str, account: &str) {
+    let user = format!("{}.{}", account, KR_OAUTH_CACHE_KEY);
+    if let Ok(entry) = Entry::new(&kr_service(slug), &user) {
+        let _ = entry.delete_password();
+    }
+    fallback_delete(slug, &format!("{}.oauth", account));
 }
 
 // ── Permissions ──────────────────────────────────────────────

@@ -90,6 +90,26 @@ pub enum AuthType {
     BearerToken,
     ApiKey,
     Basic,
+    /// OAuth2 "client credentials" (RFC 6749 §4.4) — machine-à-machine,
+    /// sans utilisateur final. Couvre Azure AD (app-only), et la plupart
+    /// des APIs SaaS proposant un flux M2M par client_id/client_secret.
+    /// Le moteur obtient, met en cache et renouvelle le jeton lui-même —
+    /// le manifeste ne voit jamais le jeton, seulement client_id/secret.
+    /// Renommage explicite requis : rename_all="snake_case" convertirait
+    /// sinon "OAuth2ClientCredentials" en "o_auth2_client_credentials"
+    /// (majuscules O/A consécutives traitées comme une frontière de mot) —
+    /// vérifié empiriquement, piège classique de la conversion de casse
+    /// automatique sur un identifiant contenant un acronyme.
+    #[serde(rename = "oauth2_client_credentials")]
+    OAuth2ClientCredentials,
+    /// OAuth2 JWT-bearer avec compte de service (RFC 7523), tel qu'utilisé
+    /// par Google Cloud : l'utilisateur fournit le JSON de compte de
+    /// service téléchargé depuis la console GCP (un seul champ secret),
+    /// le moteur en extrait client_email/private_key/token_uri, construit
+    /// et signe (RS256) un JWT, puis l'échange contre un jeton d'accès.
+    /// Même raison de renommage explicite que OAuth2ClientCredentials.
+    #[serde(rename = "oauth2_service_account")]
+    OAuth2ServiceAccount,
     /// Aucune authentification requise (APIs publiques en lecture).
     None,
 }
@@ -136,6 +156,27 @@ pub struct AuthSchema {
     /// Où obtenir des identifiants — affiché si la connexion échoue.
     #[serde(default)]
     pub help_url: Option<String>,
+    /// URL du endpoint de token OAuth2 — requis pour
+    /// oauth2_client_credentials. Ignoré pour oauth2_service_account
+    /// (le `token_uri` du JSON de compte de service fait foi). Peut être
+    /// sur un host DIFFÉRENT de api.base_url (ex: login.microsoftonline.com
+    /// vs graph.microsoft.com) — c'est un fonctionnement OAuth2 normal,
+    /// pas une exception au garde-fou anti-SSRF : ce dernier protège les
+    /// *endpoints d'opération* contre l'exfiltration vers un tiers ; ici,
+    /// la même transparence s'applique déjà à api.base_url lui-même — un
+    /// manifeste malveillant pourrait de toute façon y pointer un host
+    /// arbitraire, le TOML restant lisible et auditable avant toute
+    /// confiance accordée par `iloc connect`.
+    #[serde(default)]
+    pub token_url: Option<String>,
+    /// Scope(s) OAuth2 optionnel(s), envoyé(s) tel quel au endpoint de
+    /// token (chaîne séparée par des espaces, convention OAuth2 standard).
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// oauth2_service_account uniquement : valeur du claim JWT `aud` si
+    /// différente du `token_uri` du fichier de compte de service (rare).
+    #[serde(default)]
+    pub jwt_audience: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -149,6 +190,82 @@ pub enum ArgLocation {
     Query,
     Body,
     Path,
+}
+
+/// Encodage du corps pour POST/PUT/PATCH. JSON par défaut ; certaines
+/// APIs historiques ou minimalistes (Stripe, entre autres) exigent
+/// `application/x-www-form-urlencoded` — jamais les deux mélangés dans
+/// la même opération.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyEncoding {
+    #[default]
+    Json,
+    Form,
+}
+
+/// En-tête HTTP additionnel STATIQUE — `value` est un littéral figé au
+/// moment de l'écriture du manifeste, JAMAIS un template substitué avec
+/// un argument ou un secret (vérifié à la validation : `value` ne peut
+/// contenir aucune accolade). C'est ce qui préserve intact l'invariant de
+/// sécurité du fichier : le SEUL header piloté par une donnée utilisateur
+/// reste le header d'authentification unique construit dans
+/// provider_engine.rs::auth_header_pair(). `extra_headers` ne fait
+/// qu'ajouter des constantes (ex: "Stripe-Version: 2024-06-20").
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StaticHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// Stratégie de pagination automatique. Dans les deux cas, le moteur
+/// pilote lui-même un argument DÉJÀ déclaré dans `operations.args` (voir
+/// `cursor_arg`/`offset_arg`) — aucun mécanisme séparé de placement de
+/// valeur n'est nécessaire : la substitution query/body/GraphQL déjà en
+/// place pour cet argument s'applique automatiquement à chaque page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaginationStyle {
+    /// Curseur opaque renvoyé par l'API elle-même (Stripe, GraphQL Relay
+    /// via pageInfo.endCursor, la plupart des APIs modernes).
+    Cursor,
+    /// Page/offset numérique incrémenté par le moteur (APIs REST plus
+    /// anciennes ou plus simples).
+    Offset,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Pagination {
+    pub style: PaginationStyle,
+    /// id d'un argument DÉJÀ déclaré dans operations.args, que le moteur
+    /// pilote automatiquement (requis pour style="cursor").
+    #[serde(default)]
+    pub cursor_arg: Option<String>,
+    /// Chemin pointé (ex: "page_info.end_cursor") dans la réponse JSON où
+    /// trouver le curseur de la page suivante (requis pour style="cursor").
+    #[serde(default)]
+    pub next_cursor_field: Option<String>,
+    /// Chemin pointé optionnel vers un booléen indiquant s'il reste des
+    /// pages — en son absence, le moteur s'arrête dès que
+    /// next_cursor_field est absent/null/vide.
+    #[serde(default)]
+    pub has_more_field: Option<String>,
+    /// id d'un argument DÉJÀ déclaré dans operations.args, incrémenté par
+    /// le moteur de `page_size` à chaque page (requis pour style="offset").
+    #[serde(default)]
+    pub offset_arg: Option<String>,
+    /// Nombre d'éléments par page (requis pour style="offset") — le moteur
+    /// s'arrête dès qu'une page renvoie moins d'éléments que cette valeur.
+    #[serde(default)]
+    pub page_size: Option<u32>,
+    /// Chemin pointé vers le tableau d'éléments à concaténer entre les
+    /// pages (requis, les deux styles).
+    pub items_field: String,
+    /// Garde-fou obligatoire contre une pagination sans fin (API buguée,
+    /// curseur qui ne progresse jamais, etc.) — jamais de valeur par
+    /// défaut implicite, un manifeste doit choisir cette limite en
+    /// connaissance de cause.
+    pub max_pages: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -196,6 +313,33 @@ pub struct Operation {
     /// Champs du JSON de réponse à afficher (sinon JSON brut indenté).
     #[serde(default)]
     pub response_fields: Vec<String>,
+    /// Encodage du corps — voir BodyEncoding. Sans effet sur GET/DELETE.
+    #[serde(default)]
+    pub body_encoding: BodyEncoding,
+    /// Si renseigné, cette opération est un appel GraphQL plutôt que REST :
+    /// `endpoint` est l'URL unique du endpoint GraphQL, `method` doit être
+    /// "POST", et tous les arguments doivent avoir location="body" — ils
+    /// deviennent les `variables` GraphQL (nommées par leur `field`/`id`),
+    /// jamais interpolés dans le texte de la requête elle-même. Le texte
+    /// ici DOIT utiliser des variables nommées GraphQL (`$nom`), jamais
+    /// de valeurs littérales injectées — c'est le moteur qui envoie
+    /// {"query": ..., "variables": {...}} en un seul appel JSON.
+    #[serde(default)]
+    pub graphql_query: Option<String>,
+    /// En-têtes HTTP additionnels, valeurs figées — voir StaticHeader.
+    #[serde(default)]
+    pub extra_headers: Vec<StaticHeader>,
+    /// Nom du header à remplir avec un UUID v4 généré par le moteur à
+    /// chaque invocation (ex: "Idempotency-Key" pour Stripe). La valeur
+    /// n'est JAMAIS fournie par le manifeste ni par l'utilisateur.
+    #[serde(default)]
+    pub idempotency_header: Option<String>,
+    /// Pagination automatique — si renseignée, `iloc <slug> <op>` page
+    /// lui-même à travers TOUTES les pages disponibles (jusqu'à max_pages)
+    /// et renvoie un résultat déjà concaténé, sans que l'utilisateur ait
+    /// besoin de connaître le mécanisme de pagination de l'API sous-jacente.
+    #[serde(default)]
+    pub pagination: Option<Pagination>,
 }
 
 fn default_danger() -> Danger { Danger::Caution }
@@ -339,6 +483,33 @@ fn validate_auth(auth: &AuthSchema) -> Result<()> {
                 bail!("auth.header est requis pour auth.type = \"{:?}\"", auth.auth_type);
             }
         }
+        AuthType::OAuth2ClientCredentials => {
+            let ids: Vec<&str> = auth.fields.iter().map(|f| f.id.as_str()).collect();
+            if ids != ["client_id", "client_secret"] {
+                bail!(
+                    "auth.type = \"oauth2_client_credentials\" exige exactement deux champs, \
+                     dans l'ordre : id=\"client_id\" puis id=\"client_secret\" (reçu : {:?})",
+                    ids
+                );
+            }
+            match &auth.token_url {
+                Some(u) if !u.trim().is_empty() => require_https_or_localhost(u, "auth.token_url")?,
+                _ => bail!("auth.token_url est requis pour auth.type = \"oauth2_client_credentials\""),
+            }
+        }
+        AuthType::OAuth2ServiceAccount => {
+            let ids: Vec<&str> = auth.fields.iter().map(|f| f.id.as_str()).collect();
+            if ids != ["service_account_json"] {
+                bail!(
+                    "auth.type = \"oauth2_service_account\" exige exactement un champ : \
+                     id=\"service_account_json\" (reçu : {:?})",
+                    ids
+                );
+            }
+            // Pas de validation de auth.token_url ici : le token_uri du JSON
+            // de compte de service fait foi au runtime (voir provider_engine.rs)
+            // — un token_url de manifeste serait de toute façon ignoré.
+        }
     }
 
     let mut seen_ids: HashSet<&str> = HashSet::new();
@@ -354,6 +525,26 @@ fn validate_auth(auth: &AuthSchema) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Même règle HTTPS-ou-local que validate_base_url, mais sans extraction
+/// de host (pas besoin de comparaison inter-host pour un token_url —
+/// voir le commentaire sur AuthSchema::token_url). Délibérément une
+/// fonction séparée plutôt qu'une factorisation avec validate_base_url :
+/// cette dernière est déjà couverte par des tests qui verrouillent son
+/// comportement exact, la retoucher pour la partager ajouterait un risque
+/// de régression pour un gain de lisibilité marginal.
+fn require_https_or_localhost(url: &str, field_name: &str) -> Result<()> {
+    let is_https = url.starts_with("https://");
+    let is_local_http = url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost");
+    if !is_https && !is_local_http {
+        bail!(
+            "{} doit être en HTTPS (reçu : '{}'). \
+             Seule exception : http://127.0.0.1 ou http://localhost, pour le développement local.",
+            field_name, url
+        );
+    }
     Ok(())
 }
 
@@ -506,6 +697,137 @@ fn validate_operation(op: &Operation, base_host: &str) -> Result<()> {
                 "endpoint de '{}' référence '{{{}}}' mais aucun argument avec location=\"path\" et id=\"{}\" n'est déclaré",
                 op.path.join("."), placeholder, placeholder
             );
+        }
+    }
+
+    // ── GraphQL : method=POST imposé, tous les args en location="body" ──
+    // (ils deviennent des variables GraphQL, pas des query/path params —
+    // voir Operation::graphql_query dans ce fichier).
+    if op.graphql_query.is_some() {
+        if method != "POST" {
+            bail!(
+                "L'opération '{}' déclare graphql_query mais method=\"{}\" — GraphQL exige POST",
+                op.path.join("."), op.method
+            );
+        }
+        for arg in &op.args {
+            if arg.location != ArgLocation::Body {
+                bail!(
+                    "L'opération '{}' est GraphQL : l'argument '{}' doit avoir location=\"body\" \
+                     (il devient une variable GraphQL), pas \"{:?}\"",
+                    op.path.join("."), arg.id, arg.location
+                );
+            }
+        }
+    }
+
+    // ── extra_headers : littéraux figés uniquement, jamais substitués ──
+    // (voir StaticHeader) — deux garde-fous complémentaires : (1) aucune
+    // accolade dans la valeur, pour bannir toute tentative de template
+    // qui contournerait auth_header_pair()/resolve_auth_header() comme
+    // seul point d'entrée pour un header piloté par une donnée
+    // utilisateur/secrète ; (2) une liste noire de noms de headers déjà
+    // gérés ailleurs par le moteur, qu'un manifeste ne doit jamais
+    // pouvoir écraser.
+    const RESERVED_HEADER_NAMES: &[&str] = &["authorization", "host", "content-length"];
+    for h in &op.extra_headers {
+        if h.name.trim().is_empty() {
+            bail!("L'opération '{}' a un extra_headers avec un nom vide", op.path.join("."));
+        }
+        if RESERVED_HEADER_NAMES.contains(&h.name.to_ascii_lowercase().as_str()) {
+            bail!(
+                "L'opération '{}' déclare extra_headers avec le nom réservé '{}' — \
+                 géré exclusivement par le moteur, jamais par un manifeste",
+                op.path.join("."), h.name
+            );
+        }
+        if h.value.contains('{') || h.value.contains('}') {
+            bail!(
+                "L'opération '{}' a un extra_header '{}' dont la valeur contient une accolade \
+                 ('{}') — les valeurs de extra_headers doivent être des littéraux figés, \
+                 jamais un template substitué avec un argument ou un secret",
+                op.path.join("."), h.name, h.value
+            );
+        }
+    }
+    if let Some(header_name) = &op.idempotency_header {
+        if header_name.trim().is_empty() {
+            bail!("L'opération '{}' a idempotency_header vide", op.path.join("."));
+        }
+        if RESERVED_HEADER_NAMES.contains(&header_name.to_ascii_lowercase().as_str()) {
+            bail!(
+                "L'opération '{}' déclare idempotency_header sur le nom réservé '{}'",
+                op.path.join("."), header_name
+            );
+        }
+    }
+
+    // ── Pagination automatique ────────────────────────────────────────
+    if let Some(p) = &op.pagination {
+        if p.items_field.trim().is_empty() {
+            bail!("L'opération '{}' a pagination.items_field vide", op.path.join("."));
+        }
+        if p.max_pages == 0 {
+            bail!(
+                "L'opération '{}' a pagination.max_pages = 0 — doit être au moins 1",
+                op.path.join(".")
+            );
+        }
+        if p.max_pages > 500 {
+            bail!(
+                "L'opération '{}' a pagination.max_pages = {} — plafonné à 500 par prudence \
+                 (une API qui a réellement besoin de plus de 500 pages a probablement un \
+                 problème de curseur/offset qui ne progresse pas)",
+                op.path.join("."), p.max_pages
+            );
+        }
+        match p.style {
+            PaginationStyle::Cursor => {
+                let arg_id = p.cursor_arg.as_deref().unwrap_or("");
+                if arg_id.is_empty() {
+                    bail!(
+                        "L'opération '{}' a pagination.style=\"cursor\" mais pas de cursor_arg",
+                        op.path.join(".")
+                    );
+                }
+                if !op.args.iter().any(|a| a.id == arg_id) {
+                    bail!(
+                        "L'opération '{}' a pagination.cursor_arg=\"{}\" mais aucun argument \
+                         de ce id n'est déclaré dans operations.args",
+                        op.path.join("."), arg_id
+                    );
+                }
+                if p.next_cursor_field.as_deref().unwrap_or("").trim().is_empty() {
+                    bail!(
+                        "L'opération '{}' a pagination.style=\"cursor\" mais pas de next_cursor_field",
+                        op.path.join(".")
+                    );
+                }
+            }
+            PaginationStyle::Offset => {
+                let arg_id = p.offset_arg.as_deref().unwrap_or("");
+                if arg_id.is_empty() {
+                    bail!(
+                        "L'opération '{}' a pagination.style=\"offset\" mais pas de offset_arg",
+                        op.path.join(".")
+                    );
+                }
+                if !op.args.iter().any(|a| a.id == arg_id) {
+                    bail!(
+                        "L'opération '{}' a pagination.offset_arg=\"{}\" mais aucun argument \
+                         de ce id n'est déclaré dans operations.args",
+                        op.path.join("."), arg_id
+                    );
+                }
+                match p.page_size {
+                    Some(0) | None => bail!(
+                        "L'opération '{}' a pagination.style=\"offset\" mais page_size est \
+                         absent ou nul (doit être au moins 1)",
+                        op.path.join(".")
+                    ),
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -895,5 +1217,335 @@ location = "body"
             vec!["org", "repo", "number"]
         );
         assert_eq!(extract_placeholders("/items"), Vec::<String>::new());
+    }
+
+    // ── OAuth2 / GraphQL / body_encoding / extra_headers (session août 2026) ──
+
+    fn oauth2_client_credentials_toml() -> String {
+        r#"
+[provider]
+slug = "azuretest"
+name = "AzureTest"
+description = "Un provider de test OAuth2"
+author = "Test Author"
+manifest_version = 1
+
+[auth]
+type = "oauth2_client_credentials"
+token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+scope = "https://management.azure.com/.default"
+prompt_label = "Identifiants Azure AD"
+[[auth.fields]]
+id = "client_id"
+label = "Client ID"
+[[auth.fields]]
+id = "client_secret"
+label = "Client Secret"
+
+[api]
+base_url = "https://management.azure.com"
+
+[[operations]]
+path = ["vm", "list"]
+method = "GET"
+endpoint = "/vms"
+summary = "Liste les VMs"
+danger = "safe"
+"#.to_string()
+    }
+
+    #[test]
+    fn oauth2_client_credentials_parses_when_well_formed() {
+        let m = parse(oauth2_client_credentials_toml().as_bytes()).expect("doit parser");
+        assert_eq!(m.auth.auth_type, AuthType::OAuth2ClientCredentials);
+        assert_eq!(m.auth.token_url.as_deref(), Some("https://login.microsoftonline.com/common/oauth2/v2.0/token"));
+    }
+
+    #[test]
+    fn oauth2_client_credentials_rejects_wrong_field_names() {
+        let toml = oauth2_client_credentials_toml().replace("id = \"client_secret\"", "id = \"secret\"");
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("client_id"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn oauth2_client_credentials_rejects_single_field() {
+        let toml = oauth2_client_credentials_toml().replace(
+            "[[auth.fields]]\nid = \"client_secret\"\nlabel = \"Client Secret\"\n", ""
+        );
+        assert!(parse(toml.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn oauth2_client_credentials_requires_token_url() {
+        let toml = oauth2_client_credentials_toml()
+            .replace("token_url = \"https://login.microsoftonline.com/common/oauth2/v2.0/token\"\n", "");
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("token_url"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn oauth2_client_credentials_rejects_non_https_token_url() {
+        let toml = oauth2_client_credentials_toml().replace(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            "http://login.microsoftonline.com/common/oauth2/v2.0/token",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("HTTPS"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn oauth2_client_credentials_allows_localhost_token_url_for_dev() {
+        let toml = oauth2_client_credentials_toml().replace(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+            "http://127.0.0.1:9999/token",
+        );
+        assert!(parse(toml.as_bytes()).is_ok());
+    }
+
+    fn oauth2_service_account_toml() -> String {
+        r#"
+[provider]
+slug = "gcptest"
+name = "GcpTest"
+description = "Un provider de test GCP"
+author = "Test Author"
+manifest_version = 1
+
+[auth]
+type = "oauth2_service_account"
+prompt_label = "JSON de compte de service GCP"
+[[auth.fields]]
+id = "service_account_json"
+label = "Contenu du fichier JSON"
+
+[api]
+base_url = "https://compute.googleapis.com"
+
+[[operations]]
+path = ["instance", "list"]
+method = "GET"
+endpoint = "/instances"
+summary = "Liste les instances"
+danger = "safe"
+"#.to_string()
+    }
+
+    #[test]
+    fn oauth2_service_account_parses_when_well_formed() {
+        let m = parse(oauth2_service_account_toml().as_bytes()).expect("doit parser");
+        assert_eq!(m.auth.auth_type, AuthType::OAuth2ServiceAccount);
+    }
+
+    #[test]
+    fn oauth2_service_account_rejects_wrong_field_name() {
+        let toml = oauth2_service_account_toml().replace("id = \"service_account_json\"", "id = \"json_key\"");
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("service_account_json"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn oauth2_service_account_rejects_two_fields() {
+        let toml = oauth2_service_account_toml().replace(
+            "[[auth.fields]]\nid = \"service_account_json\"\nlabel = \"Contenu du fichier JSON\"\n",
+            "[[auth.fields]]\nid = \"service_account_json\"\nlabel = \"x\"\n[[auth.fields]]\nid = \"extra\"\nlabel = \"y\"\n",
+        );
+        assert!(parse(toml.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn graphql_operation_requires_post_method() {
+        let toml = minimal_valid_toml().replace(
+            "method = \"GET\"\nendpoint = \"/items\"\nsummary = \"Liste les items\"\ndanger = \"safe\"",
+            "method = \"GET\"\nendpoint = \"/graphql\"\nsummary = \"Requête GraphQL\"\ndanger = \"safe\"\ngraphql_query = \"query { items { id } }\"",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("POST"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn graphql_operation_requires_body_location_args() {
+        let toml = minimal_valid_toml().replace(
+            "method = \"GET\"\nendpoint = \"/items\"\nsummary = \"Liste les items\"\ndanger = \"safe\"",
+            "method = \"POST\"\nendpoint = \"/graphql\"\nsummary = \"Requête GraphQL\"\ndanger = \"safe\"\n\
+             graphql_query = \"query($id: String!) { item(id: $id) { id } }\"\n\n[[operations.args]]\n\
+             id = \"id\"\npositional = true\nrequired = true\nhelp = \"id\"\nlocation = \"query\"",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("GraphQL"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn graphql_operation_with_body_args_and_post_is_valid() {
+        let toml = minimal_valid_toml().replace(
+            "method = \"GET\"\nendpoint = \"/items\"\nsummary = \"Liste les items\"\ndanger = \"safe\"",
+            "method = \"POST\"\nendpoint = \"/graphql\"\nsummary = \"Requête GraphQL\"\ndanger = \"safe\"\n\
+             graphql_query = \"query($id: String!) { item(id: $id) { id } }\"\n\n[[operations.args]]\n\
+             id = \"id\"\npositional = true\nrequired = true\nhelp = \"id\"\nlocation = \"body\"",
+        );
+        let m = parse(toml.as_bytes()).expect("doit parser");
+        assert!(m.operations[0].graphql_query.is_some());
+    }
+
+    #[test]
+    fn body_encoding_defaults_to_json_when_absent() {
+        let m = parse(minimal_valid_toml().as_bytes()).unwrap();
+        assert_eq!(m.operations[0].body_encoding, BodyEncoding::Json);
+    }
+
+    #[test]
+    fn body_encoding_form_parses_correctly() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\nbody_encoding = \"form\"",
+        );
+        let m = parse(toml.as_bytes()).unwrap();
+        assert_eq!(m.operations[0].body_encoding, BodyEncoding::Form);
+    }
+
+    #[test]
+    fn extra_header_with_braces_in_value_is_rejected() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\n\n[[operations.extra_headers]]\nname = \"X-Custom\"\nvalue = \"{token}\"",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("accolade"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn extra_header_with_reserved_name_is_rejected() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\n\n[[operations.extra_headers]]\nname = \"Authorization\"\nvalue = \"whatever\"",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("réservé"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn extra_header_literal_value_is_accepted() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\n\n[[operations.extra_headers]]\nname = \"Stripe-Version\"\nvalue = \"2024-06-20\"",
+        );
+        let m = parse(toml.as_bytes()).expect("doit parser");
+        assert_eq!(m.operations[0].extra_headers[0].value, "2024-06-20");
+    }
+
+    #[test]
+    fn idempotency_header_with_reserved_name_is_rejected() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\nidempotency_header = \"Host\"",
+        );
+        assert!(parse(toml.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn idempotency_header_valid_name_is_accepted() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\nidempotency_header = \"Idempotency-Key\"",
+        );
+        let m = parse(toml.as_bytes()).expect("doit parser");
+        assert_eq!(m.operations[0].idempotency_header.as_deref(), Some("Idempotency-Key"));
+    }
+
+    // ── Pagination automatique (session août 2026) ────────────────────
+
+    fn toml_with_cursor_arg_and_pagination(pagination_block: &str) -> String {
+        minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            &format!(
+                "danger = \"safe\"\n\n[[operations.args]]\nid = \"cursor\"\nlong = \"cursor\"\n\
+                 required = false\nhelp = \"curseur\"\nlocation = \"query\"\n\n{}",
+                pagination_block
+            ),
+        )
+    }
+
+    #[test]
+    fn cursor_pagination_valid_manifest_parses() {
+        let toml = toml_with_cursor_arg_and_pagination(
+            "[operations.pagination]\nstyle = \"cursor\"\ncursor_arg = \"cursor\"\n\
+             next_cursor_field = \"next_cursor\"\nitems_field = \"data\"\nmax_pages = 20",
+        );
+        let m = parse(toml.as_bytes()).expect("doit parser");
+        assert!(m.operations[0].pagination.is_some());
+    }
+
+    #[test]
+    fn cursor_pagination_requires_cursor_arg_to_reference_declared_arg() {
+        let toml = toml_with_cursor_arg_and_pagination(
+            "[operations.pagination]\nstyle = \"cursor\"\ncursor_arg = \"nexiste_pas\"\n\
+             next_cursor_field = \"next_cursor\"\nitems_field = \"data\"\nmax_pages = 20",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("aucun argument"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn cursor_pagination_requires_next_cursor_field() {
+        let toml = toml_with_cursor_arg_and_pagination(
+            "[operations.pagination]\nstyle = \"cursor\"\ncursor_arg = \"cursor\"\n\
+             items_field = \"data\"\nmax_pages = 20",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("next_cursor_field"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn offset_pagination_requires_page_size() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\n\n[[operations.args]]\nid = \"offset\"\nlong = \"offset\"\n\
+             required = false\nhelp = \"offset\"\nlocation = \"query\"\n\n\
+             [operations.pagination]\nstyle = \"offset\"\noffset_arg = \"offset\"\n\
+             items_field = \"data\"\nmax_pages = 20",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("page_size"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn offset_pagination_valid_manifest_parses() {
+        let toml = minimal_valid_toml().replace(
+            "danger = \"safe\"",
+            "danger = \"safe\"\n\n[[operations.args]]\nid = \"offset\"\nlong = \"offset\"\n\
+             required = false\nhelp = \"offset\"\nlocation = \"query\"\n\n\
+             [operations.pagination]\nstyle = \"offset\"\noffset_arg = \"offset\"\n\
+             page_size = 50\nitems_field = \"data\"\nmax_pages = 20",
+        );
+        let m = parse(toml.as_bytes()).expect("doit parser");
+        assert_eq!(m.operations[0].pagination.as_ref().unwrap().page_size, Some(50));
+    }
+
+    #[test]
+    fn pagination_max_pages_zero_is_rejected() {
+        let toml = toml_with_cursor_arg_and_pagination(
+            "[operations.pagination]\nstyle = \"cursor\"\ncursor_arg = \"cursor\"\n\
+             next_cursor_field = \"next_cursor\"\nitems_field = \"data\"\nmax_pages = 0",
+        );
+        let err = parse(toml.as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("max_pages"), "erreur inattendue : {err}");
+    }
+
+    #[test]
+    fn pagination_max_pages_above_500_is_rejected() {
+        let toml = toml_with_cursor_arg_and_pagination(
+            "[operations.pagination]\nstyle = \"cursor\"\ncursor_arg = \"cursor\"\n\
+             next_cursor_field = \"next_cursor\"\nitems_field = \"data\"\nmax_pages = 501",
+        );
+        assert!(parse(toml.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn pagination_missing_items_field_is_rejected() {
+        let toml = toml_with_cursor_arg_and_pagination(
+            "[operations.pagination]\nstyle = \"cursor\"\ncursor_arg = \"cursor\"\n\
+             next_cursor_field = \"next_cursor\"\nmax_pages = 20",
+        );
+        assert!(parse(toml.as_bytes()).is_err());
     }
 }

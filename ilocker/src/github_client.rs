@@ -100,6 +100,9 @@ pub struct GhIssue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GhPullRequest {
     pub number:     u64,
+    /// Identifiant global GraphQL (ex: "PR_kwDOA...") — requis par set_pr_draft(),
+    /// distinct de `number` (REST) et de `head.label` (ex: "owner:branche").
+    pub node_id:    String,
     pub title:      String,
     pub state:      String,
     pub html_url:   String,
@@ -1333,6 +1336,36 @@ mod tests {
     #[test]
     fn single_page_no_link_header_content() {
         assert_eq!(parse_next_link(""), None);
+    }
+
+    #[test]
+    fn gh_pull_request_deserializes_node_id_from_real_api_shape() {
+        // Réponse représentative de l'API REST GitHub pour une PR (champs réellement
+        // renvoyés par GET /repos/{owner}/{repo}/pulls/{number}). Régression du bug
+        // où set_pr_draft() recevait head.label ("owner:branche") au lieu du vrai
+        // node_id GraphQL — la mutation GraphQL échouait systématiquement.
+        let raw = r#"{
+            "number": 42,
+            "node_id": "PR_kwDOA1b2c3M4Nfa5",
+            "title": "feat: ajoute le mode hors-ligne",
+            "state": "open",
+            "html_url": "https://github.com/alphabechirdiallo-netizen/ilocker/pull/42",
+            "body": "Description de la PR",
+            "user": {"login": "bechir", "avatar_url": null, "html_url": null, "type": "User"},
+            "head": {"label": "bechir:feature-offline", "ref": "feature-offline", "sha": "abc123"},
+            "base": {"label": "alphabechirdiallo-netizen:main", "ref": "main", "sha": "def456"},
+            "draft": true,
+            "mergeable": null,
+            "merged": false,
+            "created_at": "2026-08-01T10:00:00Z",
+            "updated_at": "2026-08-02T10:00:00Z"
+        }"#;
+
+        let pr: GhPullRequest = serde_json::from_str(raw).expect("doit se désérialiser");
+        assert_eq!(pr.node_id, "PR_kwDOA1b2c3M4Nfa5");
+        // Le node_id doit être distinct de head.label : c'est exactement la confusion
+        // à l'origine du bug (les deux sont des String, faciles à interchanger par erreur).
+        assert_ne!(pr.node_id, pr.head.label);
     }
 }
 

@@ -356,8 +356,11 @@ pub async fn run_clone_cloud(token_str: &str, project_key: &str, dest_dir: Optio
 async fn download_url(url: &str) -> Result<Vec<u8>> {
     use hyper_rustls::HttpsConnectorBuilder;
     let uri:      hyper::Uri = url.parse()?;
+    // with_native_roots() — pas with_webpki_roots() (même correctif que
+    // s3_client.rs/azure_client.rs/github_client.rs/vercel_client.rs/
+    // supabase_client.rs/updater.rs/provider_engine.rs).
     let connector = HttpsConnectorBuilder::new()
-        .with_webpki_roots().https_or_http().enable_http1().build();
+        .with_native_roots().https_or_http().enable_http1().build();
     let client: hyper::Client<_, hyper::Body> = hyper::Client::builder().build(connector);
     let resp = tokio::time::timeout(Duration::from_secs(30), client.get(uri)).await
         .map_err(|_| anyhow::anyhow!("Download timeout"))??;
