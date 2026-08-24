@@ -4,6 +4,17 @@
   "description": "Centre de commandes visuel pour ilocker — parcourez, cherchez et lancez les 213 commandes sans jamais mémoriser la syntaxe.",
   "version": "0.1.0",
   "publisher": "ilocker",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alphabechirdiallo-netizen/ilocker.git",
+    "directory": "ilocker-studio-vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/alphabechirdiallo-netizen/ilocker/issues"
+  },
+  "homepage": "https://github.com/alphabechirdiallo-netizen/ilocker#readme",
+  "keywords": ["ilocker", "snapshot", "backup", "deploy", "p2p"],
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other", "SCM Providers"],
   "activationEvents": [],

@@ -1,7 +1,7 @@
 # ============================================================
 #  .github/workflows/release.yml
 #
-#  Déclenché par : git tag v*  (ex: git tag v1.9.0 && git push --tags)
+#  Déclenché par : git tag v*  (ex: git tag v1.10.0 && git push --tags)
 #
 #  Produit 5 binaires statiques :
 #    iloc-linux-x86_64
@@ -256,12 +256,8 @@ jobs:
           ### Installation rapide
 
           \`\`\`bash
-          # Linux / macOS (une ligne) — repo public
+          # Linux / macOS (une ligne)
           curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sh
-
-          # Linux / macOS — repo privé (nécessite un token GitHub)
-          curl -fsSL -H \"Authorization: token \$GITHUB_TOKEN\" \\
-            https://raw.githubusercontent.com/${{ github.repository }}/main/ilocker-deploy/install.sh | sh -s -- --token \"\$GITHUB_TOKEN\"
 
           # Windows (PowerShell)
           irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex

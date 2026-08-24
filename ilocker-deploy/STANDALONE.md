@@ -1,4 +1,4 @@
-# ilocker — Architecture Standalone v1.9.0
+# ilocker — Architecture Standalone v1.10.0
 
 ## Vision
 
@@ -20,7 +20,7 @@ projet courant pour détecter ce qui doit être créé/configuré.
 ┌─────────────────────────────────────────────────────────────────────┐
 │                   Développeur A (publie)                             │
 │                                                                      │
-│  git tag v1.9.0 && git push --tags                                  │
+│  git tag v1.10.0 && git push --tags                                 │
 │       ↓                                                              │
 │  GitHub Actions compile 5 binaires statiques                        │
 │  → iloc-linux-x86_64                                                │
@@ -864,8 +864,8 @@ ilocker/                         ← code source Rust (Cargo.toml + Cargo.lock c
 
 ```bash
 git add .
-git commit -m "feat: v1.9.0 standalone + providers GitHub/Vercel/Supabase"
-git tag v1.9.0
+git commit -m "feat: v1.10.0 standalone + providers GitHub/Vercel/Supabase"
+git tag v1.10.0
 git push origin main --tags
 ```
 
