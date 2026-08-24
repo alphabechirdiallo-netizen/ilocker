@@ -51,11 +51,11 @@ else
     RED=''; GREEN=''; YELLOW=''; CYAN=''; BOLD=''; RESET=''
 fi
 
-info()    { printf "  ${CYAN}→${RESET} %s\n" "$*"; }
-success() { printf "  ${GREEN}✓${RESET} %s\n" "$*"; }
-warn()    { printf "  ${YELLOW}⚠${RESET} %s\n" "$*"; }
+info()    { printf "  ${CYAN}→${RESET} %s\n" "$*" >&2; }
+success() { printf "  ${GREEN}✓${RESET} %s\n" "$*" >&2; }
+warn()    { printf "  ${YELLOW}⚠${RESET} %s\n" "$*" >&2; }
 error()   { printf "  ${RED}✗ Erreur:${RESET} %s\n" "$*" >&2; exit 1; }
-step()    { printf "\n${BOLD}%s${RESET}\n" "$*"; }
+step()    { printf "\n${BOLD}%s${RESET}\n" "$*" >&2; }
 
 # ── Parse arguments ────────────────────────────────────────
 while [ "$#" -gt 0 ]; do
