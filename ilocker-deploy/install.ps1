@@ -143,8 +143,16 @@ function Test-Checksum {
 
     try {
         $headers     = Get-HttpHeaders
-        $sumsContent = (Invoke-WebRequest -Uri $sumsUrl -Headers $headers -UseBasicParsing).Content
-        $lines       = $sumsContent -split "`n"
+        $rawContent  = (Invoke-WebRequest -Uri $sumsUrl -Headers $headers -UseBasicParsing).Content
+        # GitHub sert SHA256SUMS en content-type: application/octet-stream ->
+        # Invoke-WebRequest renvoie alors .Content en byte[] et non en string ;
+        # -split sur un byte[] ne donne jamais les vraies lignes du fichier.
+        $sumsContent = if ($rawContent -is [byte[]]) {
+            [System.Text.Encoding]::UTF8.GetString($rawContent)
+        } else {
+            $rawContent
+        }
+        $lines       = $sumsContent -split "`r?`n"
         $expected    = $null
 
         foreach ($line in $lines) {

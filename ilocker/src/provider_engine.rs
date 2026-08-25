@@ -457,7 +457,11 @@ impl GenericClient {
     /// valider immédiatement des identifiants fraîchement saisis.
     pub async fn verify(&self, endpoint: &str) -> Result<Value> {
         let url = self.url_for(endpoint);
-        let mut builder = Request::builder().method(Method::GET).uri(&url);
+        let mut builder = Request::builder()
+            .method(Method::GET)
+            .uri(&url)
+            .header("User-Agent", "ilocker-provider-engine/1.0")
+            .header("Accept", "application/json");
         if let Some((h, v)) = self.resolve_auth_header().await? {
             builder = builder.header(h, v);
         }
