@@ -304,7 +304,7 @@ impl VercelClient {
             .uri(url)
             .header("Authorization",  format!("Bearer {}", self.token))
             .header("Content-Type",   "application/json")
-            .header("User-Agent",     "ilocker/1.10.3")
+            .header("User-Agent",     "ilocker/1.10.4")
     }
 
     async fn send(&self, req: Request<Body>) -> Result<(u16, Vec<u8>)> {

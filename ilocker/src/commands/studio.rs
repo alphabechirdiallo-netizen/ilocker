@@ -213,8 +213,26 @@ pub fn run_project_status() -> Result<()> {
 
 /// Vrai/faux : le CLI `code` (VS Code, ou un fork compatible comme
 /// Cursor/Windsurf enregistré sous le même nom) est-il dans le PATH ?
+///
+/// Sous Windows, VS Code s'installe comme un script `code.cmd` (pas
+/// `code.exe`). `std::process::Command` ne résout automatiquement que
+/// l'extension `.exe` quand aucune extension n'est fournie (comportement
+/// documenté de la bibliothèque standard) — jamais `.cmd`/`.bat`, à la
+/// différence du CLI Windows (cmd.exe/PowerShell) qui, lui, applique
+/// %PATHEXT%. Sans essayer explicitement `code.cmd`, l'éditeur reste
+/// introuvable même correctement installé et fonctionnel en tapant
+/// `code` dans un terminal.
 fn vscode_cli_available() -> Option<String> {
-    for bin in ["code", "code-insiders", "cursor"] {
+    let candidates: &[&str] = if cfg!(windows) {
+        &[
+            "code.cmd", "code.exe", "code",
+            "code-insiders.cmd", "code-insiders.exe", "code-insiders",
+            "cursor.cmd", "cursor.exe", "cursor",
+        ]
+    } else {
+        &["code", "code-insiders", "cursor"]
+    };
+    for bin in candidates {
         if let Ok(output) = std::process::Command::new(bin).arg("--version").output() {
             if output.status.success() {
                 return Some(bin.to_string());
@@ -258,7 +276,7 @@ pub async fn run_open() -> Result<()> {
         match install_extension(&editor_bin).await {
             Ok(()) => println!("✓ Extension installée."),
             Err(e) => {
-                println!("⚠ Installation automatique impossible : {e}");
+                println!("⚠ Installation automatique impossible : {e:#}");
                 println!("  Téléchargez « {VSIX_ASSET_NAME} » depuis la page Releases");
                 println!("  du dépôt, puis : {editor_bin} --install-extension <fichier.vsix>");
                 return Ok(());

@@ -1,5 +1,5 @@
 // ============================================================
-//  ilocker (iloc) — v1.10.3  (Standalone Edition)
+//  ilocker (iloc) — v1.10.4  (Standalone Edition)
 //
 //  Architecture : binaire autonome, zéro serveur requis.
 //  Distribution : USB, Xender, Bluetooth, email, n'importe quoi.
@@ -56,9 +56,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name    = "iloc",
-    version = "1.10.3",
+    version = "1.10.4",
     about   = "ilocker — instant snapshot, Zero-Knowledge P2P & partage universel",
-    long_about = "ilocker v1.10.3 — Standalone Edition\n\
+    long_about = "ilocker v1.10.4 — Standalone Edition\n\
                   \n\
                   Aucun serveur requis. Distribuez iloc par USB, Xender,\n\
                   Bluetooth, email — la commande s'installe dans le système.\n\
@@ -1109,7 +1109,12 @@ enum CloudConfigAction {
 enum SentinelAction { Init, Enable, Disable, Status, Uninstall }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
-enum CompletionShell { Bash, Zsh }
+enum CompletionShell {
+    Bash,
+    Zsh,
+    #[value(name = "powershell")]
+    PowerShell,
+}
 
 #[derive(Subcommand)]
 enum StudioAction {
@@ -1486,7 +1491,19 @@ enum SupabaseAdvisorAction {
 // ═════════════════════════════════════════════════════════════
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    if let Err(e) = run().await {
+        // Erreur utilisateur normale (slug invalide, checksum, réseau, etc.) :
+        // un message clair, jamais un stack backtrace Rust brut — celui-ci
+        // n'apporte rien à un développeur qui a juste fait une faute de
+        // frappe ou tapé un slug déjà pris, et RUST_BACKTRACE=1 est courant
+        // chez les développeurs Rust (donc pas qu'un artefact de test).
+        eprintln!("Error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
     // ── Interception des commandes de providers dynamiques ────
     // AVANT tout parsing clap statique : si le premier argument
     // correspond à un provider installé via `iloc provider install`,
@@ -1543,8 +1560,9 @@ async fn main() -> Result<()> {
 
         Commands::Completion { shell, setup } => {
             let s = match shell {
-                CompletionShell::Bash => commands::completion::Shell::Bash,
-                CompletionShell::Zsh  => commands::completion::Shell::Zsh,
+                CompletionShell::Bash       => commands::completion::Shell::Bash,
+                CompletionShell::Zsh        => commands::completion::Shell::Zsh,
+                CompletionShell::PowerShell => commands::completion::Shell::PowerShell,
             };
             if setup { commands::completion::run_setup(s)?; }
             else     { commands::completion::run(s)?; }

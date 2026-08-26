@@ -82,8 +82,43 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Le logo occupe à lui seul ~31 lignes ; en dessous d'un certain nombre
+    // de lignes disponibles, le panneau de contenu (projets/snapshots) n'a
+    // plus de place du tout. Plutôt que de dessiner un dashboard tronqué
+    // à 0 ligne de contenu (ou de risquer un dépassement arithmétique sur
+    // un calcul de largeur/hauteur dérivé), on prévient clairement l'
+    // utilisateur AVANT d'entrer en mode raw/alternate-screen.
+    const MIN_ROWS: u16 = 44;
+    const MIN_COLS: u16 = 70;
+    let (cols, rows) = terminal::size()?;
+    if rows < MIN_ROWS || cols < MIN_COLS {
+        println!();
+        println!(
+            "  Terminal trop petit pour le dashboard ({}x{}, minimum {}x{}).",
+            cols, rows, MIN_COLS, MIN_ROWS
+        );
+        println!("  Agrandissez la fenêtre du terminal, puis relancez `iloc dashboard`.");
+        println!();
+        return Ok(());
+    }
+
     // Check terminal color support
     let true_color = supports_true_color();
+
+    // Filet de sécurité : si le rendu panique pour une raison quelconque
+    // (bug non prévu ici, terminal exotique, etc.), on restaure quand même
+    // le terminal AVANT d'afficher le message de panic. Sans ce hook, un
+    // panic en plein mode raw + alternate-screen laisse le terminal de
+    // l'utilisateur dans un état cassé (raw mode actif, mauvais écran) —
+    // ce qui ressemble exactement à un affichage "gribouillé" et persiste
+    // même après la fin du process.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show);
+        let _ = terminal::disable_raw_mode();
+        default_hook(info);
+    }));
 
     // Enter raw/alternate-screen mode
     let mut stdout = io::stdout();
@@ -103,6 +138,12 @@ pub fn run() -> Result<()> {
         cursor::Show,
     )?;
     terminal::disable_raw_mode()?;
+
+    // Restaurer le hook par défaut : sinon toute panique APRÈS le dashboard
+    // (dans une commande complètement différente lancée plus tard dans le
+    // même process) continuerait inutilement à tenter de "nettoyer" un
+    // terminal qui n'est plus en mode raw.
+    let _ = std::panic::take_hook();
 
     result
 }
@@ -189,14 +230,14 @@ fn draw(
 
     // Left panel: project list
     draw_panel_border(stdout, content_top, 0, left_w, content_h, "  PROJECTS", cols)?;
-    draw_project_list(stdout, projects, selected, content_top + 1, 1, left_w - 2, content_h - 2)?;
+    draw_project_list(stdout, projects, selected, content_top + 1, 1, left_w.saturating_sub(2), content_h.saturating_sub(2))?;
 
     // Right panel: snapshot tree
     draw_panel_border(stdout, content_top, left_w, right_w, content_h, "  SNAPSHOT HISTORY", cols)?;
     if let Some(proj) = projects.get(selected) {
         draw_snapshot_tree(
             stdout, proj, expanded,
-            content_top + 1, left_w + 1, right_w - 2, content_h - 2,
+            content_top + 1, left_w + 1, right_w.saturating_sub(2), content_h.saturating_sub(2),
         )?;
     }
 
@@ -255,7 +296,7 @@ fn draw_title_bar(stdout: &mut io::Stdout, row: u16, cols: u16) -> Result<()> {
     let subtitle = "  Instant snapshot engine  |  Zero-Knowledge P2P sharing  ";
     let right_side = format!("{:>width$}", subtitle, width = (cols as usize).saturating_sub(title.len()));
     let full = format!("{}{}", title, right_side);
-    let padded = format!("{:<width$}", &full[..full.len().min(cols as usize)], width = cols as usize);
+    let padded = format!("{:<width$}", truncate(&full, cols as usize), width = cols as usize);
     write!(stdout, "{}", padded)?;
 
     queue!(
@@ -289,14 +330,19 @@ fn draw_panel_border(
         SetForegroundColor(C_BORDER),
     )?;
     let lbl = format!("{}{}", label, " ");
-    let remaining = (width as usize).saturating_sub(lbl.len() + 2);
+    // Largeur totale exacte : ┌(1) + ─(1) + lbl + (N × ─) + ┐(1) = width
+    // => N = width - lbl.len() - 3. L'ancien calcul ('remaining = width -
+    // lbl.len() - 2') oubliait à la fois le ┐ final ET un espace littéral
+    // laissé dans le format string : la bordure du haut débordait donc de
+    // 2 colonnes dans le panneau voisin (confirmé visuellement en rejouant
+    // le dashboard via un émulateur de terminal réel).
+    let remaining = (width as usize).saturating_sub(lbl.len() + 3);
     write!(
         stdout,
-        "{}{}{}{} {}{}",
+        "{}{}{}{}{}",
         "\u{250C}", "\u{2500}",
         lbl,
         "\u{2500}".repeat(remaining),
-        "",
         "\u{2510}"
     )?;
 
@@ -304,13 +350,13 @@ fn draw_panel_border(
     for r in 1..height {
         queue!(stdout, cursor::MoveTo(left, top + r), SetForegroundColor(C_BORDER))?;
         write!(stdout, "\u{2502}")?;
-        queue!(stdout, cursor::MoveTo(left + width - 1, top + r), SetForegroundColor(C_BORDER))?;
+        queue!(stdout, cursor::MoveTo(left + width.saturating_sub(1), top + r), SetForegroundColor(C_BORDER))?;
         write!(stdout, "\u{2502}")?;
     }
 
     // Bottom border
     queue!(stdout, cursor::MoveTo(left, top + height), SetForegroundColor(C_BORDER))?;
-    write!(stdout, "{}{}{}", "\u{2514}", "\u{2500}".repeat((width - 2) as usize), "\u{2518}")?;
+    write!(stdout, "{}{}{}", "\u{2514}", "\u{2500}".repeat(width.saturating_sub(2) as usize), "\u{2518}")?;
 
     queue!(stdout, ResetColor)?;
     Ok(())
@@ -352,7 +398,7 @@ fn draw_project_list(
         let name_w = (width as usize).saturating_sub(snap_count.len() + 2);
         let name   = truncate(&proj.name, name_w);
         let line   = format!(" {:<nw$}{}", name, snap_count, nw = name_w);
-        let padded = format!("{:<width$}", &line[..line.len().min(width as usize)], width = width as usize);
+        let padded = format!("{:<width$}", truncate(&line, width as usize), width = width as usize);
         write!(stdout, "{}", padded)?;
 
         // Second line: dim path
@@ -393,12 +439,12 @@ fn draw_snapshot_tree(
         cursor::MoveTo(left + 1, top),
         SetForegroundColor(C_DIM),
     )?;
-    let key_line = truncate(&proj.project_key, width as usize - 2);
+    let key_line = truncate(&proj.project_key, (width as usize).saturating_sub(2));
     write!(stdout, " {}", key_line)?;
 
     // Path
     queue!(stdout, cursor::MoveTo(left + 1, top + 1), SetForegroundColor(C_DIM))?;
-    let path_str = truncate(&proj.path.display().to_string(), width as usize - 2);
+    let path_str = truncate(&proj.path.display().to_string(), (width as usize).saturating_sub(2));
     write!(stdout, " {}", path_str)?;
 
     if !expanded {

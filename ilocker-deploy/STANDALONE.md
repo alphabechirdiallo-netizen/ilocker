@@ -827,11 +827,11 @@ iloc (binaire statique musl/MSVC ~9 MB)
 │   └── auth_store.rs      — session iloc login (fallback chiffré, pas de keyring)
 │
 ├── Sentinel
-│   └── commands/sentinel.rs — hooks Bash/Zsh globaux (~/.ilocker/hooks/)
+│   └── commands/sentinel.rs — hooks Bash/Zsh/PowerShell globaux (~/.ilocker/hooks/)
 │
 └── TUI
     ├── commands/dashboard.rs — TUI crossterm (projets + snapshots)
-    └── commands/completion.rs — scripts Bash/Zsh
+    └── commands/completion.rs — scripts Bash/Zsh/PowerShell
 ```
 
 ---

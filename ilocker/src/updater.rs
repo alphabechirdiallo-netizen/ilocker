@@ -45,11 +45,10 @@ pub enum UpdateStatus {
 pub fn platform_asset_name() -> &'static str {
     // Compilé par Rust à la compilation — aucun runtime detection
     if cfg!(target_os = "windows") {
-        if cfg!(target_arch = "aarch64") {
-            "iloc-windows-aarch64.exe"
-        } else {
-            "iloc-windows-x86_64.exe"
-        }
+        // release.yml ne construit qu'une seule cible Windows (x86_64-pc-windows-msvc) ;
+        // Windows on ARM exécute nativement les binaires x86_64 par émulation, donc
+        // aucune branche aarch64 séparée — cohérent avec install.ps1 qui fait le même choix.
+        "iloc-windows-x86_64.exe"
     } else if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
             "iloc-macos-aarch64"
