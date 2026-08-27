@@ -17,6 +17,9 @@ curl -fsSL https://github.com/alphabechirdiallo-netizen/ilocker/releases/latest/
 # Windows (PowerShell)
 irm https://github.com/alphabechirdiallo-netizen/ilocker/releases/latest/download/install.ps1 | iex
 
+# Windows (invite de commande / cmd.exe)
+curl.exe -fsSL -o install.cmd https://github.com/alphabechirdiallo-netizen/ilocker/releases/latest/download/install.cmd && install.cmd
+
 # Depuis un binaire reçu hors-ligne (USB, Xender, Bluetooth, email…)
 chmod +x ./iloc-linux-x86_64 && ./iloc-linux-x86_64 selfinstall
 ```

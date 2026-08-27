@@ -218,11 +218,12 @@ jobs:
       - name: List built binaries
         run: ls -lh ./binaries/
 
-      # ── Copier install.sh / install.ps1 pour les inclure dans SHA256SUMS ──
+      # ── Copier install.sh / install.ps1 / install.cmd pour les inclure dans SHA256SUMS ──
       - name: Copy install scripts into binaries dir
         run: |
           cp ./ilocker-deploy/install.sh ./binaries/install.sh
           cp ./ilocker-deploy/install.ps1 ./binaries/install.ps1
+          cp ./ilocker-deploy/install.cmd ./binaries/install.cmd
 
       # ── Générer SHA256SUMS (binaires + scripts d'installation + extension) ───
       - name: Generate SHA256SUMS
@@ -236,6 +237,7 @@ jobs:
             iloc-windows-x86_64.exe \
             install.sh \
             install.ps1 \
+            install.cmd \
             ilocker-studio.vsix \
             > SHA256SUMS
           cat SHA256SUMS
@@ -261,6 +263,9 @@ jobs:
 
           # Windows (PowerShell)
           irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex
+
+          # Windows (invite de commande / cmd.exe)
+          curl.exe -fsSL -o install.cmd https://github.com/${{ github.repository }}/releases/latest/download/install.cmd && install.cmd
 
           # Depuis un fichier reçu (Xender, USB, Bluetooth, email…)
           chmod +x ./iloc-linux-x86_64
@@ -397,6 +402,7 @@ jobs:
             ./binaries/iloc-windows-x86_64.exe
             ./binaries/SHA256SUMS
             ./binaries/install.sh
+            ./binaries/install.cmd
             ./binaries/install.ps1
             ./binaries/ilocker-studio.vsix
         env:
@@ -459,3 +465,26 @@ jobs:
             --clobber
           & "$env:TEMP\iloc.exe" --version
           Write-Host "Smoke test passed OK"
+
+      - name: Test install.cmd (invite de commande Windows, pas PowerShell)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          mkdir "%TEMP%\iloc_cmdtest"
+          cd /d "%TEMP%\iloc_cmdtest"
+          gh release download ${{ github.ref_name }} --repo "${{ github.repository }}" --pattern "install.cmd" --output install.cmd --clobber
+          if errorlevel 1 exit /b 1
+          call install.cmd
+          if errorlevel 1 exit /b 1
+          rem PATH persistant (registre "User") mis a jour par install.ps1,
+          rem mais jamais relu par la session cmd.exe DEJA ouverte (comportement
+          rem Windows normal, pas un bug : necessite un nouveau terminal). On
+          rem verifie donc directement le binaire installe par son chemin complet,
+          rem exactement comme le fait deja le test PowerShell ci-dessus pour le
+          rem binaire brut.
+          if not exist "%LOCALAPPDATA%\ilocker\bin\iloc.exe" (
+              echo iloc.exe introuvable apres install.cmd
+              exit /b 1
+          )
+          "%LOCALAPPDATA%\ilocker\bin\iloc.exe" --version
+          echo install.cmd smoke test passed OK

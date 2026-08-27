@@ -1,6 +1,6 @@
 [package]
 name = "iloc"
-version = "1.10.4"
+version = "1.10.5"
 edition = "2021"
 description = "ilocker — instant snapshot, P2P & partage universel (standalone)"
 authors = ["ilocker contributors"]
