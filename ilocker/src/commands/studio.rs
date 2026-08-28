@@ -285,6 +285,7 @@ pub async fn run_open() -> Result<()> {
     }
 
     let cwd = std::env::current_dir().unwrap_or_default();
+    println!("→ Ouverture d'ilocker Studio dans {editor_bin}…");
     let status = std::process::Command::new(&editor_bin)
         .arg(&cwd)
         .arg("--command")
@@ -298,6 +299,8 @@ pub async fn run_open() -> Result<()> {
         // d'activité de toute façon.
         let _ = std::process::Command::new(&editor_bin).arg(&cwd).status();
     }
+    println!("✓ Commande envoyée à {editor_bin}. Si la fenêtre ne s'affiche pas au premier");
+    println!("  plan, vérifiez qu'une fenêtre VS Code n'est pas déjà ouverte en arrière-plan.");
 
     Ok(())
 }

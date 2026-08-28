@@ -284,7 +284,7 @@ impl GitHubClient {
             .header("Authorization",  format!("Bearer {}", self.token))
             .header("Accept",         "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent",     "ilocker/1.10.5")
+            .header("User-Agent",     "ilocker/1.10.6")
             .header("Content-Type",   "application/json")
     }
 
@@ -380,7 +380,7 @@ impl GitHubClient {
             .header("Authorization",  format!("Bearer {}", self.token))
             .header("Accept",         "application/vnd.github+json")
             .header("Content-Type",   content_type)
-            .header("User-Agent",     "ilocker/1.10.5")
+            .header("User-Agent",     "ilocker/1.10.6")
             .header("Content-Length", data.len())
             .body(Body::from(data))
             .context("Construction requête upload")?;
@@ -1285,7 +1285,7 @@ impl GitHubClient {
             .uri(url)
             .header("Authorization",  format!("Bearer {}", self.token))
             .header("Content-Type",   "application/json")
-            .header("User-Agent",     "ilocker/1.10.5")
+            .header("User-Agent",     "ilocker/1.10.6")
             .body(Body::from(body))
             .context("Construction requête GraphQL")?;
         let (status, resp_body, _) = self.send(req).await?;

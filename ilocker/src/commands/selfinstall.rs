@@ -24,9 +24,10 @@
 
 use anyhow::{Context, Result};
 use colored::Colorize;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-pub fn run(target_dir: Option<PathBuf>, check_only: bool) -> Result<()> {
+pub fn run(target_dir: Option<PathBuf>, check_only: bool, yes: bool) -> Result<()> {
     println!();
     println!("{}", "ilocker — Installation système".bold());
     println!();
@@ -88,14 +89,33 @@ pub fn run(target_dir: Option<PathBuf>, check_only: bool) -> Result<()> {
             "⚠".yellow(),
             install_dir.display()
         );
-        print!("  Remplacer ? [Y/n] ");
-        use std::io::Write;
-        std::io::stdout().flush()?;
-        let mut ans = String::new();
-        std::io::stdin().read_line(&mut ans)?;
-        if ans.trim().eq_ignore_ascii_case("n") {
-            println!("  Annulé.");
+
+        if yes {
+            println!("  --yes fourni : remplacement sans confirmation.");
+        } else if !std::io::stdin().is_terminal() {
+            // Pas de TTY : lire stdin ici bloquerait indéfiniment en
+            // attendant une frappe qui ne viendra jamais (confirmé par
+            // test réel — le processus restait actif plusieurs secondes
+            // sans jamais rendre la main). C'est exactement le genre de
+            // blocage silencieux à éviter pour une commande pensée pour
+            // être lancée depuis n'importe où (USB, Xender, script...).
+            println!(
+                "  Entrée non-interactive détectée — relancez avec {} pour confirmer,",
+                "--yes".cyan()
+            );
+            println!("  ou exécutez cette commande depuis un terminal interactif.");
+            println!("  Annulé (rien n'a été modifié).");
             return Ok(());
+        } else {
+            print!("  Remplacer ? [Y/n] ");
+            use std::io::Write;
+            std::io::stdout().flush()?;
+            let mut ans = String::new();
+            std::io::stdin().read_line(&mut ans)?;
+            if ans.trim().eq_ignore_ascii_case("n") {
+                println!("  Annulé.");
+                return Ok(());
+            }
         }
         println!();
     }

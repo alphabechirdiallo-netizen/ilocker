@@ -1,5 +1,5 @@
 // ============================================================
-//  ilocker (iloc) — v1.10.5  (Standalone Edition)
+//  ilocker (iloc) — v1.10.6  (Standalone Edition)
 //
 //  Architecture : binaire autonome, zéro serveur requis.
 //  Distribution : USB, Xender, Bluetooth, email, n'importe quoi.
@@ -56,9 +56,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name    = "iloc",
-    version = "1.10.5",
+    version = "1.10.6",
     about   = "ilocker — instant snapshot, Zero-Knowledge P2P & partage universel",
-    long_about = "ilocker v1.10.5 — Standalone Edition\n\
+    long_about = "ilocker v1.10.6 — Standalone Edition\n\
                   \n\
                   Aucun serveur requis. Distribuez iloc par USB, Xender,\n\
                   Bluetooth, email — la commande s'installe dans le système.\n\
@@ -132,6 +132,11 @@ enum Commands {
         dir: Option<std::path::PathBuf>,
         #[arg(long)]
         check: bool,
+        /// Remplace sans demander de confirmation (scripts/CI, ou
+        /// contexte non-interactif type "run" depuis un gestionnaire
+        /// de fichiers, où une invite [Y/n] pourrait bloquer indéfiniment)
+        #[arg(long, short)]
+        yes: bool,
     },
     /// Met à jour iloc vers la dernière version
     Update {
@@ -1569,8 +1574,8 @@ async fn run() -> Result<()> {
         }
 
         // ── Installation & mise à jour ─────────────────────────
-        Commands::SelfInstall { dir, check } => {
-            commands::selfinstall::run(dir, check)?;
+        Commands::SelfInstall { dir, check, yes } => {
+            commands::selfinstall::run(dir, check, yes)?;
         }
         Commands::Update { check } => {
             commands::update::run(check).await?;
