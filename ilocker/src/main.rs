@@ -1,5 +1,5 @@
 // ============================================================
-//  ilocker (iloc) — v1.10.6  (Standalone Edition)
+//  ilocker (iloc) — v1.10.7  (Standalone Edition)
 //
 //  Architecture : binaire autonome, zéro serveur requis.
 //  Distribution : USB, Xender, Bluetooth, email, n'importe quoi.
@@ -56,9 +56,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name    = "iloc",
-    version = "1.10.6",
+    version = "1.10.7",
     about   = "ilocker — instant snapshot, Zero-Knowledge P2P & partage universel",
-    long_about = "ilocker v1.10.6 — Standalone Edition\n\
+    long_about = "ilocker v1.10.7 — Standalone Edition\n\
                   \n\
                   Aucun serveur requis. Distribuez iloc par USB, Xender,\n\
                   Bluetooth, email — la commande s'installe dans le système.\n\

@@ -350,14 +350,29 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
 ///
 /// Best-effort total : aucune erreur ici ne doit jamais faire
 /// échouer la commande `iloc save` qui vient de réussir.
-pub fn run_backup_tiers_async(ilocker_dir: PathBuf, snap_id: String) {
+/// Lance la sauvegarde secondaire (Tier 2/3) dans un thread dédié et
+/// retourne son `JoinHandle`.
+///
+/// IMPORTANT : ce handle DOIT être attendu (`.join()`) avant que le
+/// process appelant ne se termine. Un thread lancé via
+/// `std::thread::spawn` sans être joint meurt immédiatement avec le
+/// process qui l'a créé — or `iloc save` est une commande CLI de très
+/// courte durée : son `main()` retourne quasi instantanément après
+/// l'impression de la confirmation locale, ce qui tue ce thread avant
+/// qu'il n'ait eu la moindre chance de terminer un push cloud réel
+/// (confirmé : testé avec un vrai backend S3, le bucket restait
+/// systématiquement vide juste après `iloc save`, alors que le même
+/// push fonctionne parfaitement lorsqu'il est attendu). Ce n'est
+/// valable que dans un process longue durée (démon/serveur) — pas
+/// ici, d'où ce changement.
+pub fn run_backup_tiers_async(ilocker_dir: PathBuf, snap_id: String) -> Option<std::thread::JoinHandle<()>> {
     let cfg = load(&ilocker_dir);
 
     if cfg.mirrors.is_empty() && !cfg.cloud_backup_enabled && !cfg.hyperscale_backup_enabled {
-        return;
+        return None;
     }
 
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         // Tier 2 — miroirs locaux (pas besoin d'async)
         mirror_snapshot(&cfg, &snap_id);
 
@@ -397,9 +412,7 @@ pub fn run_backup_tiers_async(ilocker_dir: PathBuf, snap_id: String) {
                 });
             }
         }
-    });
-    // Note : volontairement non-joiné — la commande rend la main
-    // immédiatement, sans attendre la fin de la synchronisation.
+    }))
 }
 
 // ── Migration d'un vault existant vers un nouvel emplacement ────

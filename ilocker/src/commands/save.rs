@@ -174,11 +174,24 @@ pub fn run(message: &str) -> Result<()> {
         );
     }
 
-    // ── 11. Sponsor message (background, non-blocking) ────────
-    // ── 12. Sauvegarde secondaire (Tier 2/3, background, non-blocking) ──
+    // ── 12. Sauvegarde secondaire (Tier 2/3) ───────────────────
     // Miroir local / Cloud BYOC / Hyperscale — uniquement si configurés
-    // via `iloc vault`. Best-effort : ne peut jamais faire échouer save.
-    crate::vault::run_backup_tiers_async(ilocker_dir.clone(), snap_id.clone());
+    // via `iloc vault`. Best-effort : ne peut jamais faire échouer save
+    // (les erreurs sont affichées mais n'empêchent pas le snapshot local,
+    // déjà scellé à ce stade).
+    //
+    // Le thread est explicitement attendu (join) : `iloc save` est une
+    // commande CLI de courte durée, son process se termine dès que cette
+    // fonction retourne. Un thread lancé sans être joint mourrait avec
+    // le process avant d'avoir eu la moindre chance de terminer un push
+    // réseau réel — confirmé par test contre un vrai backend S3, où le
+    // bucket restait systématiquement vide sans ce join. Le snapshot
+    // LOCAL, lui, est déjà confirmé à l'utilisateur ci-dessus avant ce
+    // point : ce join n'ajoute donc pas de latence perçue sur la partie
+    // qui compte le plus, seulement sur la sauvegarde secondaire elle-même.
+    if let Some(handle) = crate::vault::run_backup_tiers_async(ilocker_dir.clone(), snap_id.clone()) {
+        let _ = handle.join();
+    }
 
     Ok(())
 }
