@@ -207,19 +207,19 @@ pub async fn run_share_cloud(ttl_hours: u64, files: Vec<String>, profile: Option
         "    {} {} {}",
         "iloc clone".cyan().bold(),
         "<link>".green(),
-        format!("--key {}", project_key).yellow()
+        format!("--key-secret {}", project_key).yellow()
     );
     println!();
 
     Ok(())
 }
 
-// ── iloc clone iloc://cloud-share-... --key iloc://... ────────
+// ── iloc clone iloc://cloud-share-... --key-secret iloc://... ────
 
 pub async fn run_clone_cloud(token_str: &str, project_key: &str, dest_dir: Option<PathBuf>) -> Result<()> {
     // Decode using the separately-provided project_key
     let payload = cloud_share_token::decode(token_str, project_key)
-        .map_err(|e| anyhow::anyhow!("Cannot decrypt share link: {}\n\nMake sure you are using the correct --key.", e))?;
+        .map_err(|e| anyhow::anyhow!("Cannot decrypt share link: {}\n\nMake sure you are using the correct --key-secret.", e))?;
 
     cloud_share_token::describe(&payload);
 

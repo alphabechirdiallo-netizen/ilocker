@@ -626,8 +626,28 @@ pub async fn run_status() -> Result<()> {
     println!();
     println!("{}", "  ilocker Hyperscale — état".bold());
 
-    let config = HyperscaleConfig::load(&hs_dir).unwrap_or_default();
-    let dht    = DhtTable::load(&hs_dir).unwrap_or_else(|_| DhtTable::new(&config.org_id));
+    // IMPORTANT : ne jamais fabriquer une config par défaut à la place
+    // d'une config manquante ici. `unwrap_or_default()` faisait
+    // exactement ça (avec un org_id généré aléatoirement à CHAQUE appel)
+    // et affichait ensuite « configuration valide » — en contradiction
+    // directe avec `hyperscale config validate` et `hyperscale push`,
+    // qui refusent honnêtement de continuer sans config persistée.
+    // Confirmé par test réel : les 3 commandes appelées coup sur coup,
+    // sur le même dossier, donnaient des verdicts opposés.
+    let config = match HyperscaleConfig::load(&hs_dir) {
+        Ok(c) => c,
+        Err(_) => {
+            println!(
+                "  {} {}",
+                "santé:".dimmed(),
+                "⚠ Hyperscale n'est pas encore configuré pour ce projet.".yellow()
+            );
+            println!("  Lancez `iloc hyperscale config init` pour commencer.");
+            println!();
+            return Ok(());
+        }
+    };
+    let dht = DhtTable::load(&hs_dir).unwrap_or_else(|_| DhtTable::new(&config.org_id));
 
     println!("  {} {}", "organisation:".dimmed(), config.org_id.cyan());
     println!(
