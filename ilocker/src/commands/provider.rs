@@ -676,7 +676,15 @@ pub fn run_profile_remove(slug: String, name: String, yes: bool) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════
 
 fn prompt(label: &str) -> Result<String> {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        bail!(
+            "Entrée non-interactive détectée en attendant une réponse ({}).\n\
+             Fournissez la valeur via les options de la commande (voir --help),\n\
+             ou définissez ILOC_AUTO_CONFIRM=1 pour bypasser les confirmations.",
+            label.trim()
+        );
+    }
     print!("{}", label);
     std::io::stdout().flush().ok();
     let mut s = String::new();

@@ -107,7 +107,18 @@ use std::path::PathBuf;
 // ── Helpers partagés ──────────────────────────────────────────
 
 fn prompt(label: &str) -> Result<String> {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        // Même classe de risque que le blocage confirmé sur `iloc selfinstall` :
+        // lire stdin sans vérifier qu'un terminal est présent peut bloquer
+        // indéfiniment dans un contexte non-interactif (CI, script...).
+        bail!(
+            "Entrée non-interactive détectée en attendant une réponse ({}).\n\
+             Fournissez la valeur via les options de la commande (voir --help),\n\
+             ou définissez ILOC_AUTO_CONFIRM=1 pour bypasser les confirmations.",
+            label.trim()
+        );
+    }
     print!("{}", label);
     std::io::stdout().flush()?;
     let mut buf = String::new();

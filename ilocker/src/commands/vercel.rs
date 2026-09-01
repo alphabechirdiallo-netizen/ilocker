@@ -99,7 +99,15 @@ use std::path::{Path, PathBuf};
 // ── Helpers partagés ──────────────────────────────────────────
 
 fn prompt(label: &str) -> Result<String> {
-    use std::io::Write;
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        bail!(
+            "Entrée non-interactive détectée en attendant une réponse ({}).\n\
+             Fournissez la valeur via les options de la commande (voir --help),\n\
+             ou définissez ILOC_AUTO_CONFIRM=1 pour bypasser les confirmations.",
+            label.trim()
+        );
+    }
     print!("{}", label);
     std::io::stdout().flush()?;
     let mut buf = String::new();
@@ -1234,7 +1242,7 @@ pub async fn run_env_push(
                 .map(PathBuf::from)
                 .find(|p| p.exists())
                 .ok_or_else(|| anyhow::anyhow!(
-                    "Aucun fichier .env trouvé. Précisez avec --input <fichier>."
+                    "Aucun fichier .env trouvé. Précisez le chemin : iloc vercel env push <fichier>."
                 ))?
         }
     };
